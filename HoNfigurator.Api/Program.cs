@@ -7,6 +7,7 @@ using HoNfigurator.Core.Discord;
 using HoNfigurator.Core.Events;
 using HoNfigurator.Core.Health;
 using HoNfigurator.Core.Metrics;
+using HoNfigurator.Core.Network;
 using HoNfigurator.Core.Notifications;
 using HoNfigurator.Core.Charts;
 using HoNfigurator.Core.Parsing;
@@ -170,6 +171,28 @@ builder.Services.AddSingleton<GameEventDispatcher>();
 builder.Services.AddSingleton<BanManager>();
 builder.Services.AddSingleton<AuthService>(sp => new AuthService(sp.GetRequiredService<HoNConfiguration>()));
 builder.Services.AddSingleton<AdvancedMetricsService>();
+
+// Register new services from Python port
+builder.Services.AddSingleton<IAutoPingListener>(sp =>
+{
+    var logger = sp.GetRequiredService<ILogger<AutoPingListener>>();
+    var config = sp.GetRequiredService<HoNConfiguration>();
+    return new AutoPingListener(logger, config);
+});
+
+builder.Services.AddSingleton<IPatchingService>(sp =>
+{
+    var logger = sp.GetRequiredService<ILogger<PatchingService>>();
+    var config = sp.GetRequiredService<HoNConfiguration>();
+    return new PatchingService(logger, config);
+});
+
+builder.Services.AddSingleton<IMatchStatsService>(sp =>
+{
+    var logger = sp.GetRequiredService<ILogger<MatchStatsService>>();
+    var config = sp.GetRequiredService<HoNConfiguration>();
+    return new MatchStatsService(logger, config);
+});
 
 // Register notification and chart services
 builder.Services.AddSingleton<INotificationService, NotificationService>();

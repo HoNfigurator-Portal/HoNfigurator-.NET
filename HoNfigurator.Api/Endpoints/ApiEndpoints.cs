@@ -9,6 +9,7 @@ using HoNfigurator.Core.Notifications;
 using HoNfigurator.Core.Charts;
 using HoNfigurator.Core.Statistics;
 using HoNfigurator.Core.Discord;
+using HoNfigurator.Core.Network;
 using HoNfigurator.GameServer.Services;
 using System.Text.Json;
 using HoNfigurator.Core.Events;
@@ -199,6 +200,63 @@ public static class ApiEndpoints
             .WithName("ValidateIp")
             .WithSummary("Validate IP address")
             .WithDescription("Checks if an IP address is valid and reachable");
+        health.MapGet("/enhanced", GetEnhancedHealthChecks)
+            .WithName("GetEnhancedHealthChecks")
+            .WithSummary("Get enhanced health checks")
+            .WithDescription("Returns enhanced health checks including lag, patch status, and port availability");
+        health.MapGet("/lag", GetLagCheck)
+            .WithName("GetLagCheck")
+            .WithSummary("Check network lag")
+            .WithDescription("Returns latency and jitter measurements to master server");
+        health.MapGet("/installation", GetInstallationCheck)
+            .WithName("GetInstallationCheck")
+            .WithSummary("Check HoN installation")
+            .WithDescription("Verifies HoN installation directory and required files");
+
+        // AutoPing endpoints
+        var autoPing = api.MapGroup("/autoping").WithTags("AutoPing");
+        autoPing.MapGet("/status", GetAutoPingStatus)
+            .WithName("GetAutoPingStatus")
+            .WithSummary("Get AutoPing status")
+            .WithDescription("Returns the current status of the AutoPing listener");
+        autoPing.MapPost("/start", StartAutoPing)
+            .WithName("StartAutoPing")
+            .WithSummary("Start AutoPing listener")
+            .WithDescription("Starts the UDP AutoPing listener for game client pings");
+        autoPing.MapPost("/stop", StopAutoPing)
+            .WithName("StopAutoPing")
+            .WithSummary("Stop AutoPing listener")
+            .WithDescription("Stops the AutoPing listener");
+        autoPing.MapGet("/health", CheckAutoPingHealth)
+            .WithName("CheckAutoPingHealth")
+            .WithSummary("Check AutoPing health")
+            .WithDescription("Performs a self-test on the AutoPing listener");
+
+        // Patching endpoints
+        var patching = api.MapGroup("/patching").WithTags("Patching");
+        patching.MapGet("/status", GetPatchStatus)
+            .WithName("GetPatchStatus")
+            .WithSummary("Get patch status")
+            .WithDescription("Returns current and latest version information");
+        patching.MapGet("/check", CheckForPatches)
+            .WithName("CheckForPatches")
+            .WithSummary("Check for patches")
+            .WithDescription("Checks master server for available updates");
+        patching.MapPost("/apply", ApplyPatch)
+            .WithName("ApplyPatch")
+            .WithSummary("Apply patch")
+            .WithDescription("Downloads and applies the latest patch");
+
+        // Match Stats endpoints
+        var matchStats = api.MapGroup("/matchstats").WithTags("Match Stats");
+        matchStats.MapPost("/submit", SubmitMatchStats)
+            .WithName("SubmitMatchStats")
+            .WithSummary("Submit match stats")
+            .WithDescription("Submits match statistics to the master server");
+        matchStats.MapPost("/resubmit", ResubmitPendingStats)
+            .WithName("ResubmitPendingStats")
+            .WithSummary("Resubmit pending stats")
+            .WithDescription("Attempts to resubmit any failed match statistics");
         
         // Dependencies endpoints
         var deps = api.MapGroup("/dependencies").WithTags("Dependencies");
@@ -1802,5 +1860,138 @@ public static class ApiEndpoints
 
         await discordBot.SendAlertAsync("🧪 Test Alert", "This is a test alert from HoNfigurator API");
         return Results.Ok(new { success = true, message = "Alert notification sent" });
+    }
+
+    // Enhanced Health Check handlers
+    private static async Task<IResult> GetEnhancedHealthChecks(HealthCheckManager healthManager)
+    {
+        var results = await healthManager.RunEnhancedChecksAsync();
+        return Results.Ok(results);
+    }
+
+    private static async Task<IResult> GetLagCheck(HealthCheckManager healthManager)
+    {
+        var result = await healthManager.CheckLagAsync();
+        return Results.Ok(result);
+    }
+
+    private static async Task<IResult> GetInstallationCheck(HealthCheckManager healthManager)
+    {
+        var result = await healthManager.CheckHoNInstallationAsync();
+        return Results.Ok(result);
+    }
+
+    private static async Task<IResult> GetPortAvailability(int port, HealthCheckManager healthManager)
+    {
+        var result = await healthManager.CheckPortAvailabilityAsync(port);
+        return Results.Ok(result);
+    }
+
+    // AutoPing handlers
+    private static IResult GetAutoPingStatus(IAutoPingListener autoPing)
+    {
+        return Results.Ok(new
+        {
+            isRunning = autoPing.IsRunning,
+            port = autoPing.Port,
+            packetCount = autoPing.PacketCount,
+            lastActivity = autoPing.LastActivity
+        });
+    }
+
+    private static async Task<IResult> StartAutoPing(IAutoPingListener autoPing)
+    {
+        await autoPing.StartAsync();
+        return Results.Ok(new { message = "AutoPing listener started", port = autoPing.Port });
+    }
+
+    private static IResult StopAutoPing(IAutoPingListener autoPing)
+    {
+        autoPing.Stop();
+        return Results.Ok(new { message = "AutoPing listener stopped" });
+    }
+
+    private static IResult CheckAutoPingHealth(IAutoPingListener autoPing)
+    {
+        var isHealthy = autoPing.CheckHealth();
+        var status = isHealthy ? "healthy" : "unhealthy";
+        return Results.Ok(new
+        {
+            status,
+            isHealthy,
+            isRunning = autoPing.IsRunning,
+            port = autoPing.Port,
+            packetCount = autoPing.PacketCount,
+            lastActivity = autoPing.LastActivity
+        });
+    }
+
+    // Patching handlers
+    private static IResult GetPatchStatus(IPatchingService patchingService)
+    {
+        return Results.Ok(new
+        {
+            currentVersion = patchingService.CurrentVersion,
+            latestVersion = patchingService.LatestVersion,
+            isPatching = patchingService.IsPatching
+        });
+    }
+
+    private static async Task<IResult> CheckForPatches(IPatchingService patchingService)
+    {
+        var result = await patchingService.CheckForUpdatesAsync();
+        return Results.Ok(new
+        {
+            updateAvailable = result.UpdateAvailable,
+            currentVersion = result.CurrentVersion,
+            latestVersion = result.LatestVersion,
+            patchSize = result.PatchSize,
+            error = result.Error
+        });
+    }
+
+    private static async Task<IResult> ApplyPatch([FromBody] ApplyPatchRequest request, IPatchingService patchingService)
+    {
+        if (string.IsNullOrEmpty(request.PatchUrl))
+            return Results.BadRequest(new { error = "Patch URL is required" });
+
+        if (patchingService.IsPatching)
+            return Results.BadRequest(new { error = "Patching is already in progress" });
+
+        var result = await patchingService.ApplyPatchAsync(request.PatchUrl);
+        return result.Success
+            ? Results.Ok(new { message = "Patch applied successfully", newVersion = result.NewVersion, duration = result.Duration })
+            : Results.Problem(result.Error ?? "Failed to apply patch");
+    }
+
+    private record ApplyPatchRequest
+    {
+        public string? PatchUrl { get; init; }
+    }
+
+    // Match Stats handlers
+    private static async Task<IResult> SubmitMatchStats([FromBody] HoNfigurator.Core.Services.MatchStats stats, IMatchStatsService matchStatsService)
+    {
+        var result = await matchStatsService.SubmitMatchStatsAsync(stats);
+        return result.Success
+            ? Results.Ok(new { message = "Match stats submitted successfully", matchId = stats.MatchId })
+            : Results.Ok(new { message = "Match stats queued for retry", matchId = stats.MatchId, error = result.Error, queued = true });
+    }
+
+    private static async Task<IResult> ResubmitPendingStats(IMatchStatsService matchStatsService)
+    {
+        var result = await matchStatsService.ResubmitPendingStatsAsync();
+        return Results.Ok(new { 
+            message = "Pending stats resubmission completed", 
+            submitted = result.Submitted,
+            failed = result.Failed,
+            success = result.Success
+        });
+    }
+
+    private record MatchStatsSubmitRequest
+    {
+        public int MatchId { get; init; }
+        public Dictionary<string, object> Stats { get; init; } = new();
     }
 }
