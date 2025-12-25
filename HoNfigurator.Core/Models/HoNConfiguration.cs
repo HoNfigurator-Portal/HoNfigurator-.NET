@@ -10,6 +10,15 @@ public class HoNConfiguration
     [JsonPropertyName("application_data")]
     public ApplicationData ApplicationData { get; set; } = new();
 
+    [JsonPropertyName("health_monitoring")]
+    public HealthMonitoringConfiguration? HealthMonitoring { get; set; }
+
+    [JsonPropertyName("server_lifecycle")]
+    public ServerLifecycleConfiguration? ServerLifecycle { get; set; }
+
+    [JsonPropertyName("cpu_affinity")]
+    public CpuAffinityConfiguration? CpuAffinity { get; set; }
+
     // Convenience properties for easier access
     [JsonIgnore]
     public string? SvrLogin => HonData.Login;
@@ -171,6 +180,96 @@ public class ApplicationData
 
     [JsonPropertyName("replay_upload")]
     public ReplayUploadSettings? ReplayUpload { get; set; }
+
+    [JsonPropertyName("storage")]
+    public StorageConfiguration? Storage { get; set; }
+
+    [JsonPropertyName("filebeat")]
+    public FilebeatConfiguration? Filebeat { get; set; }
+
+    [JsonPropertyName("github")]
+    public GitHubConfiguration? GitHub { get; set; }
+
+    [JsonPropertyName("certificates")]
+    public CertificatesConfiguration? Certificates { get; set; }
+
+    [JsonPropertyName("disk_monitoring")]
+    public DiskMonitoringConfiguration? DiskMonitoring { get; set; }
+}
+
+public class StorageConfiguration
+{
+    [JsonPropertyName("primary_path")]
+    public string PrimaryPath { get; set; } = "replays";
+
+    [JsonPropertyName("archive_path")]
+    public string? ArchivePath { get; set; }
+
+    [JsonPropertyName("logs_path")]
+    public string LogsPath { get; set; } = "logs";
+
+    [JsonPropertyName("archive_after_days")]
+    public int ArchiveAfterDays { get; set; } = 7;
+
+    [JsonPropertyName("retention_days")]
+    public int RetentionDays { get; set; } = 90;
+
+    [JsonPropertyName("auto_relocate")]
+    public bool AutoRelocate { get; set; } = false;
+
+    [JsonPropertyName("auto_cleanup")]
+    public bool AutoCleanup { get; set; } = false;
+}
+
+public class FilebeatConfiguration
+{
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; } = false;
+
+    [JsonPropertyName("install_path")]
+    public string InstallPath { get; set; } = "C:\\Program Files\\Filebeat";
+
+    [JsonPropertyName("version")]
+    public string Version { get; set; } = "8.11.0";
+
+    [JsonPropertyName("elasticsearch_host")]
+    public string ElasticsearchHost { get; set; } = "localhost:9200";
+
+    [JsonPropertyName("elasticsearch_username")]
+    public string? ElasticsearchUsername { get; set; }
+
+    [JsonPropertyName("elasticsearch_password")]
+    public string? ElasticsearchPassword { get; set; }
+
+    [JsonPropertyName("log_paths")]
+    public List<string> LogPaths { get; set; } = new() { "logs/*.log" };
+
+    [JsonPropertyName("index_prefix")]
+    public string IndexPrefix { get; set; } = "honfigurator";
+
+    [JsonPropertyName("auto_start")]
+    public bool AutoStart { get; set; } = true;
+
+    [JsonPropertyName("environment")]
+    public string Environment { get; set; } = "production";
+}
+
+public class GitHubConfiguration
+{
+    [JsonPropertyName("repository")]
+    public string Repository { get; set; } = "HoNfigurator/HoNfigurator-dotnet";
+
+    [JsonPropertyName("token")]
+    public string? Token { get; set; }
+
+    [JsonPropertyName("auto_update")]
+    public bool AutoUpdate { get; set; } = false;
+
+    [JsonPropertyName("check_updates_on_startup")]
+    public bool CheckUpdatesOnStartup { get; set; } = true;
+
+    [JsonPropertyName("preferred_branch")]
+    public string PreferredBranch { get; set; } = "main";
 }
 
 public class ReplayUploadSettings
@@ -312,4 +411,127 @@ public class ReplayCleanerSettings
 
     [JsonPropertyName("max_temp_files_age_days")]
     public int MaxTempFilesAgeDays { get; set; } = 1;
+}
+
+public class CertificatesConfiguration
+{
+    [JsonPropertyName("base_path")]
+    public string BasePath { get; set; } = "certs";
+
+    [JsonPropertyName("step_cli_path")]
+    public string? StepCliPath { get; set; }
+
+    [JsonPropertyName("default_name")]
+    public string DefaultName { get; set; } = "server";
+
+    [JsonPropertyName("ca_url")]
+    public string? CaUrl { get; set; }
+
+    [JsonPropertyName("ca_fingerprint")]
+    public string? CaFingerprint { get; set; }
+
+    [JsonPropertyName("auto_renew")]
+    public bool AutoRenew { get; set; } = true;
+
+    [JsonPropertyName("renew_threshold_days")]
+    public int RenewThresholdDays { get; set; } = 30;
+}
+
+public class DiskMonitoringConfiguration
+{
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; } = true;
+
+    [JsonPropertyName("warning_threshold")]
+    public int WarningThreshold { get; set; } = 80;
+
+    [JsonPropertyName("critical_threshold")]
+    public int CriticalThreshold { get; set; } = 95;
+
+    [JsonPropertyName("check_interval_minutes")]
+    public int CheckIntervalMinutes { get; set; } = 15;
+
+    [JsonPropertyName("monitored_paths")]
+    public List<MonitoredPath> MonitoredPaths { get; set; } = new();
+
+    [JsonPropertyName("alert_cooldown_minutes")]
+    public int AlertCooldownMinutes { get; set; } = 60;
+}
+
+public class MonitoredPath
+{
+    [JsonPropertyName("path")]
+    public string Path { get; set; } = string.Empty;
+
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
+
+    [JsonPropertyName("max_size_gb")]
+    public long MaxSizeGb { get; set; }
+}
+
+public class HealthMonitoringConfiguration
+{
+    [JsonPropertyName("auto_ping_enabled")]
+    public bool AutoPingEnabled { get; set; } = true;
+
+    [JsonPropertyName("auto_ping_interval_ms")]
+    public int AutoPingIntervalMs { get; set; } = 30000;
+
+    [JsonPropertyName("max_consecutive_failures")]
+    public int MaxConsecutiveFailures { get; set; } = 3;
+
+    [JsonPropertyName("auto_restart_on_unhealthy")]
+    public bool AutoRestartOnUnhealthy { get; set; } = true;
+
+    [JsonPropertyName("ping_timeout_ms")]
+    public int PingTimeoutMs { get; set; } = 5000;
+}
+
+public class ServerLifecycleConfiguration
+{
+    [JsonPropertyName("periodic_restart_enabled")]
+    public bool PeriodicRestartEnabled { get; set; } = true;
+
+    [JsonPropertyName("min_uptime_hours")]
+    public int MinUptimeHours { get; set; } = 24;
+
+    [JsonPropertyName("max_uptime_hours")]
+    public int MaxUptimeHours { get; set; } = 48;
+
+    [JsonPropertyName("check_interval_minutes")]
+    public int CheckIntervalMinutes { get; set; } = 5;
+
+    [JsonPropertyName("max_wait_for_game_minutes")]
+    public int MaxWaitForGameMinutes { get; set; } = 60;
+
+    [JsonPropertyName("restart_window_start_hour")]
+    public int? RestartWindowStartHour { get; set; }
+
+    [JsonPropertyName("restart_window_end_hour")]
+    public int? RestartWindowEndHour { get; set; }
+}
+
+public class CpuAffinityConfiguration
+{
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; } = false;
+
+    [JsonPropertyName("cores_per_server")]
+    public int CoresPerServer { get; set; } = 1;
+
+    [JsonPropertyName("start_core")]
+    public int StartCore { get; set; } = 0;
+
+    [JsonPropertyName("reserved_cores")]
+    public int ReservedCores { get; set; } = 2;
+
+    [JsonPropertyName("auto_assign_on_start")]
+    public bool AutoAssignOnStart { get; set; } = true;
+
+    [JsonPropertyName("set_priority")]
+    public bool SetPriority { get; set; } = false;
+
+    [JsonPropertyName("priority_level")]
+    public string PriorityLevel { get; set; } = "Normal";
 }

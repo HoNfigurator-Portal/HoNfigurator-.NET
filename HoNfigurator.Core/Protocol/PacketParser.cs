@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 namespace HoNfigurator.Core.Protocol;
 
 /// <summary>
-/// Game server packet types sent from game server to manager
+/// Game server packet types sent from game server to manager (local protocol, 0x40-0x4A range)
 /// </summary>
 public enum GameServerPacketType : byte
 {
@@ -22,39 +22,60 @@ public enum GameServerPacketType : byte
 }
 
 /// <summary>
-/// Chat server packet types for manager-chat communication
+/// Chat server packet types for manager-chat communication.
+/// Maps to NEXUS ChatProtocol ServerManager/ChatServer commands.
 /// </summary>
 public enum ManagerChatPacketType : ushort
 {
-    // Chat to Manager
-    ChatHandshakeAccepted = 0x1700,
-    ChatReplayRequest = 0x1704,
-    ChatShutdownNotice = 0x0400,
-    ChatHeartbeatReceived = 0x2A01,
-    ChatPolicies = 0x1703,
+    // Chat Server to Server Manager (0x1700 range) - ChatServerToServerManager in NEXUS
+    ChatHandshakeAccepted = 0x1700,  // NET_CHAT_SM_ACCEPT
+    ChatHandshakeRejected = 0x1701,  // NET_CHAT_SM_REJECT
+    ChatRemoteCommand = 0x1702,      // NET_CHAT_SM_REMOTE_COMMAND
+    ChatPolicies = 0x1703,           // NET_CHAT_SM_OPTIONS
+    ChatReplayRequest = 0x1704,      // NET_CHAT_SM_UPLOAD_REQUEST
+    ChatShutdownNotice = 0x0400,     // Shutdown notice
+    ChatHeartbeatReceived = 0x2A01,  // NET_CHAT_PONG
     
-    // Manager to Chat
-    MgrHandshakeRequest = 0x1600,
-    MgrServerInfoUpdate = 0x1602,
-    MgrReplayResponse = 0x1603,
-    MgrSendingHeartbeat = 0x2A00
+    // Server Manager to Chat Server (0x1600 range) - ServerManagerToChatServer in NEXUS
+    MgrHandshakeRequest = 0x1600,    // NET_CHAT_SM_CONNECT
+    MgrDisconnect = 0x1601,          // NET_CHAT_SM_DISCONNECT
+    MgrServerInfoUpdate = 0x1602,    // NET_CHAT_SM_STATUS
+    MgrReplayResponse = 0x1603,      // NET_CHAT_SM_UPLOAD_UPDATE
+    MgrSendingHeartbeat = 0x2A00     // NET_CHAT_PING
 }
 
 /// <summary>
-/// Game-Chat server packet types
+/// Game-Chat server packet types.
+/// Maps to NEXUS ChatProtocol GameServer/ChatServer commands.
 /// </summary>
 public enum GameChatPacketType : ushort
 {
-    // Game to Chat
-    GameLogin = 0x500,
-    GameServerClosed = 0x501,
-    GameSendHeartbeat = 0x2A00,
-    GameSendServerInfo = 0x502,
-    GamePlayerConnection = 0x513,
+    // Game Server to Chat Server (0x0500 range) - GameServerToChatServer in NEXUS
+    GameLogin = 0x0500,              // NET_CHAT_GS_CONNECT
+    GameServerClosed = 0x0501,       // NET_CHAT_GS_DISCONNECT
+    GameSendServerInfo = 0x0502,     // NET_CHAT_GS_STATUS
+    GameAnnounceMatch = 0x0503,      // NET_CHAT_GS_ANNOUNCE_MATCH
+    GameAbandonMatch = 0x0504,       // NET_CHAT_GS_ABANDON_MATCH
+    GameMatchStarted = 0x0505,       // NET_CHAT_GS_MATCH_STARTED
+    GameRemindPlayer = 0x0506,       // NET_CHAT_GS_REMIND_PLAYER
+    GameNotIdle = 0x0508,            // NET_CHAT_GS_NOT_IDLE
+    GameMatchAborted = 0x0509,       // NET_CHAT_GS_MATCH_ABORTED
+    GamePlayerConnection = 0x0513,   // NET_CHAT_GS_CLIENT_AUTH_RESULT
+    GameStatSubmission = 0x0514,     // NET_CHAT_GS_STAT_SUBMISSION_RESULT
+    GameMatchEnded = 0x0515,         // NET_CHAT_GS_MATCH_ENDED
+    GameMatchOngoing = 0x0516,       // NET_CHAT_GS_MATCH_ONGOING
     
-    // Chat to Game
-    ChatLogonResponse = 0x1500,
-    ChatHeartbeatReceived = 0x2A01
+    // Chat Server to Game Server (0x1500 range) - ChatServerToGameServer in NEXUS
+    ChatLogonResponse = 0x1500,      // NET_CHAT_GS_ACCEPT
+    ChatLogonRejected = 0x1501,      // NET_CHAT_GS_REJECT
+    ChatCreateMatch = 0x1502,        // NET_CHAT_GS_CREATE_MATCH
+    ChatEndMatch = 0x1503,           // NET_CHAT_GS_END_MATCH
+    ChatRemoteCommand = 0x1504,      // NET_CHAT_GS_REMOTE_COMMAND
+    ChatOptions = 0x1505,            // NET_CHAT_GS_OPTIONS
+    
+    // Bidirectional
+    GameSendHeartbeat = 0x2A00,      // NET_CHAT_PING
+    ChatHeartbeatReceived = 0x2A01   // NET_CHAT_PONG
 }
 
 /// <summary>
@@ -443,9 +464,12 @@ public class ManagerChatPacketParser
     private readonly Action<string, string>? _logger;
     
     public event Action? OnHandshakeAccepted;
+    public event Action<string>? OnHandshakeRejected;
     public event Action<ReplayRequestData>? OnReplayRequest;
     public event Action? OnShutdownNotice;
     public event Action? OnHeartbeatReceived;
+    public event Action<string>? OnRemoteCommand;
+    public event Action<Dictionary<string, string>>? OnOptionsReceived;
     
     public ManagerChatPacketParser(Action<string, string>? logger = null)
     {
@@ -461,13 +485,36 @@ public class ManagerChatPacketParser
             switch ((ManagerChatPacketType)packetType)
             {
                 case ManagerChatPacketType.ChatHandshakeAccepted:
-                    Log("debug", string.Format("{0} - Handshake accepted", prefix));
+                    // NET_CHAT_SM_ACCEPT (0x1700)
+                    Log("debug", string.Format("{0} - [NET_CHAT_SM_ACCEPT] Handshake accepted", prefix));
                     OnHandshakeAccepted?.Invoke();
                     break;
                     
+                case ManagerChatPacketType.ChatHandshakeRejected:
+                    // NET_CHAT_SM_REJECT (0x1701)
+                    var rejectReason = ParseRejectReason(packetData.Span);
+                    Log("warn", string.Format("{0} - [NET_CHAT_SM_REJECT] Handshake rejected: {1}", prefix, rejectReason));
+                    OnHandshakeRejected?.Invoke(rejectReason);
+                    break;
+                    
+                case ManagerChatPacketType.ChatRemoteCommand:
+                    // NET_CHAT_SM_REMOTE_COMMAND (0x1702)
+                    var command = ParseRemoteCommand(packetData.Span);
+                    Log("debug", string.Format("{0} - [NET_CHAT_SM_REMOTE_COMMAND] Command: {1}", prefix, command));
+                    OnRemoteCommand?.Invoke(command);
+                    break;
+                    
+                case ManagerChatPacketType.ChatPolicies:
+                    // NET_CHAT_SM_OPTIONS (0x1703)
+                    var options = ParseOptions(packetData.Span);
+                    Log("debug", string.Format("{0} - [NET_CHAT_SM_OPTIONS] Received {1} options", prefix, options.Count));
+                    OnOptionsReceived?.Invoke(options);
+                    break;
+                    
                 case ManagerChatPacketType.ChatReplayRequest:
+                    // NET_CHAT_SM_UPLOAD_REQUEST (0x1704)
                     var replayRequest = ParseReplayRequest(packetData.Span);
-                    Log("debug", string.Format("{0} - Replay request: Match {1}", prefix, replayRequest.MatchId));
+                    Log("debug", string.Format("{0} - [NET_CHAT_SM_UPLOAD_REQUEST] Replay request: Match {1}", prefix, replayRequest.MatchId));
                     OnReplayRequest?.Invoke(replayRequest);
                     break;
                     
@@ -477,7 +524,8 @@ public class ManagerChatPacketParser
                     break;
                     
                 case ManagerChatPacketType.ChatHeartbeatReceived:
-                    Log("debug", string.Format("{0} - Heartbeat received", prefix));
+                    // NET_CHAT_PONG (0x2A01)
+                    Log("debug", string.Format("{0} - [NET_CHAT_PONG] Heartbeat received", prefix));
                     OnHeartbeatReceived?.Invoke();
                     break;
                     
@@ -490,6 +538,46 @@ public class ManagerChatPacketParser
         {
             Log("error", string.Format("{0} - Error: {1}", prefix, ex.Message));
         }
+    }
+    
+    private string ParseRejectReason(ReadOnlySpan<byte> data)
+    {
+        if (data.Length == 0) return "Unknown";
+        
+        var reader = new ChatBufferReader(data);
+        return reader.HasMore ? reader.ReadString() : "Unknown";
+    }
+    
+    private string ParseRemoteCommand(ReadOnlySpan<byte> data)
+    {
+        if (data.Length == 0) return string.Empty;
+        
+        var reader = new ChatBufferReader(data);
+        return reader.HasMore ? reader.ReadString() : string.Empty;
+    }
+    
+    private Dictionary<string, string> ParseOptions(ReadOnlySpan<byte> data)
+    {
+        var options = new Dictionary<string, string>();
+        if (data.Length == 0) return options;
+        
+        try
+        {
+            var reader = new ChatBufferReader(data);
+            while (reader.HasMore)
+            {
+                var key = reader.ReadString();
+                if (string.IsNullOrEmpty(key)) break;
+                var value = reader.HasMore ? reader.ReadString() : string.Empty;
+                options[key] = value;
+            }
+        }
+        catch
+        {
+            // Options parsing can be variable, ignore errors
+        }
+        
+        return options;
     }
     
     private ReplayRequestData ParseReplayRequest(ReadOnlySpan<byte> data)

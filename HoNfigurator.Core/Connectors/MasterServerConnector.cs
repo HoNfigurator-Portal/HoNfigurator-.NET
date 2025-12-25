@@ -6,7 +6,8 @@ using Microsoft.Extensions.Logging;
 namespace HoNfigurator.Core.Connectors;
 
 /// <summary>
-/// Response from master server authentication
+/// Response from master server authentication (Server Manager auth via replay_auth)
+/// Matches NEXUS ServerRequesterController.Authentication.cs response format
 /// </summary>
 public record MasterServerAuthResponse
 {
@@ -15,6 +16,24 @@ public record MasterServerAuthResponse
     public string SessionId { get; init; } = string.Empty;
     public string ChatServerHost { get; init; } = string.Empty;
     public int ChatServerPort { get; init; }
+    public bool IsOfficial { get; init; } = true;
+    public string? CdnUploadHost { get; init; }
+    public string? CdnUploadTarget { get; init; }
+    public string Error { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Response from game server authentication (new_session endpoint)
+/// Matches NEXUS HandleServerAuthentication response
+/// </summary>
+public record GameServerAuthResponse
+{
+    public bool Success { get; init; }
+    public int ServerId { get; init; }
+    public string SessionId { get; init; } = string.Empty;
+    public string ChatServerHost { get; init; } = string.Empty;
+    public int ChatServerPort { get; init; }
+    public double LeaverThreshold { get; init; } = 0.05;
     public string Error { get; init; } = string.Empty;
 }
 
@@ -29,7 +48,8 @@ public record ReplayUploadResponse
 }
 
 /// <summary>
-/// Manages connection to the HoN Master Server for authentication and replay uploads
+/// Manages connection to the HoN Master Server (NEXUS KONGOR.MasterServer) for authentication and replay uploads.
+/// Implements server_requester.php endpoints matching NEXUS ServerRequesterController.
 /// </summary>
 public interface IMasterServerConnector
 {
@@ -38,7 +58,26 @@ public interface IMasterServerConnector
     string? SessionId { get; }
     string? ChatServerHost { get; }
     int? ChatServerPort { get; }
+    
+    /// <summary>
+    /// Authenticates as a Server Manager using replay_auth endpoint (NEXUS HandleServerManagerAuthentication)
+    /// </summary>
     Task<MasterServerAuthResponse> AuthenticateAsync(string username, string password, CancellationToken cancellationToken = default);
+    
+    /// <summary>
+    /// Authenticates a Game Server using new_session endpoint (NEXUS HandleServerAuthentication)
+    /// </summary>
+    Task<GameServerAuthResponse> AuthenticateGameServerAsync(
+        string hostAccount, 
+        int serverInstance, 
+        string password,
+        int port,
+        string serverName,
+        string description,
+        string location,
+        string ipAddress,
+        CancellationToken cancellationToken = default);
+    
     Task<ReplayUploadResponse> UploadReplayAsync(int matchId, string filePath, CancellationToken cancellationToken = default);
     Task<bool> ValidateSessionAsync(CancellationToken cancellationToken = default);
     void Disconnect();
@@ -162,6 +201,94 @@ public class MasterServerConnector : IMasterServerConnector, IDisposable
         }
     }
 
+    /// <summary>
+    /// Authenticates a Game Server using new_session endpoint.
+    /// Matches NEXUS ServerRequesterController.HandleServerAuthentication
+    /// </summary>
+    public async Task<GameServerAuthResponse> AuthenticateGameServerAsync(
+        string hostAccount, 
+        int serverInstance, 
+        string password,
+        int port,
+        string serverName,
+        string description,
+        string location,
+        string ipAddress,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            // Format login as "account:instance" per NEXUS
+            var loginFormatted = $"{hostAccount}:{serverInstance}";
+            var passwordHash = GetMd5Hash(password);
+
+            _logger.LogInformation("Registering game server {ServerName} as {Login}", serverName, loginFormatted);
+
+            var url = $"{_masterServerUrl}/server_requester.php?f=new_session";
+            
+            var content = new FormUrlEncodedContent(new[]
+            {
+                new KeyValuePair<string, string>("login", loginFormatted),
+                new KeyValuePair<string, string>("pass", passwordHash),
+                new KeyValuePair<string, string>("port", port.ToString()),
+                new KeyValuePair<string, string>("name", serverName),
+                new KeyValuePair<string, string>("desc", description),
+                new KeyValuePair<string, string>("location", location),
+                new KeyValuePair<string, string>("ip", ipAddress),
+            });
+
+            var response = await _httpClient.PostAsync(url, content, cancellationToken);
+            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            
+            _logger.LogDebug("Game server auth response ({StatusCode}): {Response}", response.StatusCode, responseBody);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorMsg = response.StatusCode switch
+                {
+                    System.Net.HttpStatusCode.Unauthorized => "Account is not a Server Host",
+                    System.Net.HttpStatusCode.NotFound => "Account not found",
+                    _ when (int)response.StatusCode >= 500 => "Master server error",
+                    _ => $"Master server returned {response.StatusCode}"
+                };
+                
+                return new GameServerAuthResponse { Success = false, Error = errorMsg };
+            }
+
+            // Parse PHP serialized response - same format but with leaverthreshold
+            var session = ExtractPhpValue(responseBody, "session");
+            var serverIdStr = ExtractPhpValue(responseBody, "server_id", isInt: true);
+            var chatAddress = ExtractPhpValue(responseBody, "chat_address");
+            var chatPortStr = ExtractPhpValue(responseBody, "chat_port", isInt: true);
+            var leaverStr = ExtractPhpValue(responseBody, "leaverthreshold");
+
+            if (!string.IsNullOrEmpty(session) && !string.IsNullOrEmpty(serverIdStr))
+            {
+                var result = new GameServerAuthResponse
+                {
+                    Success = true,
+                    ServerId = int.TryParse(serverIdStr, out var sid) ? sid : 0,
+                    SessionId = session,
+                    ChatServerHost = chatAddress ?? "chat.kongor.net",
+                    ChatServerPort = int.TryParse(chatPortStr, out var cp) ? cp : 11032,
+                    LeaverThreshold = double.TryParse(leaverStr, out var lt) ? lt : 0.05
+                };
+
+                _logger.LogInformation("Game server registered. ID: {ServerId}, Chat: {ChatHost}:{ChatPort}",
+                    result.ServerId, result.ChatServerHost, result.ChatServerPort);
+                
+                return result;
+            }
+
+            return new GameServerAuthResponse { Success = false, Error = "Failed to parse response" };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Game server authentication failed");
+            return new GameServerAuthResponse { Success = false, Error = ex.Message };
+        }
+    }
+
     public void Disconnect()
     {
         IsAuthenticated = false;
@@ -255,14 +382,16 @@ public class MasterServerConnector : IMasterServerConnector, IDisposable
     {
         try
         {
-            // PHP serialized format example:
-            // a:4:{s:9:"server_id";i:123;s:7:"session";s:32:"abc...";s:12:"chat_address";s:15:"chat.server.com";s:9:"chat_port";i:11031;}
+            // PHP serialized format example from NEXUS:
+            // a:N:{s:9:"server_id";i:123;s:8:"official";i:1;s:7:"session";s:36:"...";s:12:"chat_address";s:15:"...";s:9:"chat_port";i:11031;s:15:"cdn_upload_host";s:10:"kongor.net";s:17:"cdn_upload_target";s:6:"upload";}
             
-            // Extract server_id
             var serverIdStr = ExtractPhpValue(response, "server_id", isInt: true);
             var session = ExtractPhpValue(response, "session");
             var chatAddress = ExtractPhpValue(response, "chat_address");
             var chatPortStr = ExtractPhpValue(response, "chat_port", isInt: true);
+            var officialStr = ExtractPhpValue(response, "official", isInt: true);
+            var cdnUploadHost = ExtractPhpValue(response, "cdn_upload_host");
+            var cdnUploadTarget = ExtractPhpValue(response, "cdn_upload_target");
 
             if (!string.IsNullOrEmpty(serverIdStr) && !string.IsNullOrEmpty(session))
             {
@@ -271,8 +400,11 @@ public class MasterServerConnector : IMasterServerConnector, IDisposable
                     Success = true,
                     ServerId = int.TryParse(serverIdStr, out var sid) ? sid : 0,
                     SessionId = session,
-                    ChatServerHost = chatAddress ?? "chat.projectkongor.com",
-                    ChatServerPort = int.TryParse(chatPortStr, out var cp) ? cp : 11031
+                    ChatServerHost = chatAddress ?? "chat.kongor.net",
+                    ChatServerPort = int.TryParse(chatPortStr, out var cp) ? cp : 11031,
+                    IsOfficial = officialStr == "1",
+                    CdnUploadHost = cdnUploadHost,
+                    CdnUploadTarget = cdnUploadTarget
                 };
             }
 

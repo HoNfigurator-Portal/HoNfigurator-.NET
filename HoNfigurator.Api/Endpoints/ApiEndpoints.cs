@@ -10,6 +10,7 @@ using HoNfigurator.Core.Charts;
 using HoNfigurator.Core.Statistics;
 using HoNfigurator.Core.Discord;
 using HoNfigurator.Core.Network;
+using HoNfigurator.Core.Diagnostics;
 using HoNfigurator.GameServer.Services;
 using System.Text.Json;
 using HoNfigurator.Core.Events;
@@ -542,6 +543,168 @@ public static class ApiEndpoints
             .WithName("GetMatchSummary")
             .WithSummary("Get match summary")
             .WithDescription("Returns aggregated match statistics");
+
+        // Filebeat endpoints
+        var filebeat = api.MapGroup("/filebeat").WithTags("Filebeat");
+        filebeat.MapGet("/status", GetFilebeatStatus)
+            .WithName("GetFilebeatStatus")
+            .WithSummary("Get Filebeat status")
+            .WithDescription("Returns current Filebeat service status and configuration");
+        filebeat.MapPost("/install", InstallFilebeat)
+            .WithName("InstallFilebeat")
+            .WithSummary("Install Filebeat")
+            .WithDescription("Downloads and installs Filebeat for log shipping");
+        filebeat.MapPost("/start", StartFilebeat)
+            .WithName("StartFilebeat")
+            .WithSummary("Start Filebeat")
+            .WithDescription("Starts the Filebeat service");
+        filebeat.MapPost("/stop", StopFilebeat)
+            .WithName("StopFilebeat")
+            .WithSummary("Stop Filebeat")
+            .WithDescription("Stops the Filebeat service");
+        filebeat.MapPost("/configure", ConfigureFilebeat)
+            .WithName("ConfigureFilebeat")
+            .WithSummary("Configure Filebeat")
+            .WithDescription("Generates Filebeat configuration for Elasticsearch");
+        filebeat.MapPost("/test", TestFilebeatConnection)
+            .WithName("TestFilebeatConnection")
+            .WithSummary("Test Elasticsearch connection")
+            .WithDescription("Tests connection to Elasticsearch server");
+
+        // RBAC/Permissions endpoints
+        var rbac = api.MapGroup("/rbac").WithTags("RBAC");
+        rbac.MapGet("/permissions", GetAllPermissions)
+            .WithName("GetAllPermissions")
+            .WithSummary("List all permissions")
+            .WithDescription("Returns all available permissions with descriptions");
+        rbac.MapGet("/roles", GetAllRoles)
+            .WithName("GetAllRoles")
+            .WithSummary("List all roles")
+            .WithDescription("Returns all configured roles with their permissions");
+        rbac.MapGet("/roles/{roleName}", GetRole)
+            .WithName("GetRole")
+            .WithSummary("Get role details")
+            .WithDescription("Returns a specific role with its permissions");
+        rbac.MapPost("/roles", CreateRole)
+            .WithName("CreateRole")
+            .WithSummary("Create role")
+            .WithDescription("Creates a new role with specified permissions");
+        rbac.MapDelete("/roles/{roleName}", DeleteRole)
+            .WithName("DeleteRole")
+            .WithSummary("Delete role")
+            .WithDescription("Deletes a role");
+        rbac.MapPost("/roles/{roleName}/permissions", AddPermissionsToRole)
+            .WithName("AddPermissionsToRole")
+            .WithSummary("Add permissions to role")
+            .WithDescription("Adds permissions to an existing role");
+        rbac.MapDelete("/roles/{roleName}/permissions", RemovePermissionsFromRole)
+            .WithName("RemovePermissionsFromRole")
+            .WithSummary("Remove permissions from role")
+            .WithDescription("Removes permissions from a role");
+        rbac.MapGet("/users/{userId:int}/permissions", GetUserPermissions)
+            .WithName("GetUserPermissions")
+            .WithSummary("Get user permissions")
+            .WithDescription("Returns all permissions for a user");
+        rbac.MapPost("/users/{userId:int}/roles", AssignRoleToUser)
+            .WithName("AssignRoleToUser")
+            .WithSummary("Assign role to user")
+            .WithDescription("Assigns a role to a user");
+        rbac.MapDelete("/users/{userId:int}/roles/{roleName}", RemoveRoleFromUser)
+            .WithName("RemoveRoleFromUser")
+            .WithSummary("Remove role from user")
+            .WithDescription("Removes a role from a user");
+
+        // Skipped Frame Analytics endpoints
+        var diagnostics = api.MapGroup("/diagnostics").WithTags("Diagnostics");
+        diagnostics.MapGet("/skipped-frames", GetGlobalFrameAnalytics)
+            .WithName("GetGlobalFrameAnalytics")
+            .WithSummary("Get global frame analytics")
+            .WithDescription("Returns overall skipped frame statistics across all servers");
+        diagnostics.MapGet("/skipped-frames/server/{serverId:int}", GetServerFrameAnalytics)
+            .WithName("GetServerFrameAnalytics")
+            .WithSummary("Get server frame analytics")
+            .WithDescription("Returns skipped frame statistics for a specific server");
+        diagnostics.MapGet("/skipped-frames/player/{playerName}", GetPlayerFrameStats)
+            .WithName("GetPlayerFrameStats")
+            .WithSummary("Get player frame stats")
+            .WithDescription("Returns skipped frame statistics for a specific player");
+        diagnostics.MapPost("/skipped-frames/reset", ResetFrameAnalytics)
+            .WithName("ResetFrameAnalytics")
+            .WithSummary("Reset frame analytics")
+            .WithDescription("Clears all skipped frame data");
+
+        // Storage/File relocation endpoints
+        var storage = api.MapGroup("/storage").WithTags("Storage");
+        storage.MapGet("/status", GetStorageStatus)
+            .WithName("GetStorageStatus")
+            .WithSummary("Get storage status")
+            .WithDescription("Returns storage configuration and statistics");
+        storage.MapGet("/analytics", GetStorageAnalytics)
+            .WithName("GetStorageAnalytics")
+            .WithSummary("Get storage analytics")
+            .WithDescription("Returns detailed file analytics for primary and archive storage");
+        storage.MapPost("/relocate", RelocateOldFiles)
+            .WithName("RelocateOldFiles")
+            .WithSummary("Relocate old files")
+            .WithDescription("Moves old files to archive storage");
+        storage.MapPost("/cleanup", CleanupArchiveStorage)
+            .WithName("CleanupArchiveStorage")
+            .WithSummary("Cleanup archive storage")
+            .WithDescription("Removes old files from archive storage");
+        storage.MapPost("/relocate-logs", RelocateLogs)
+            .WithName("RelocateLogs")
+            .WithSummary("Relocate logs")
+            .WithDescription("Moves old log files to archive storage");
+
+        // Git/Version management endpoints
+        var git = api.MapGroup("/system/git").WithTags("System");
+        git.MapGet("/branch", GetCurrentBranch)
+            .WithName("GetCurrentBranch")
+            .WithSummary("Get current branch")
+            .WithDescription("Returns the current Git branch name");
+        git.MapGet("/branches", GetAllBranches)
+            .WithName("GetAllBranches")
+            .WithSummary("List all branches")
+            .WithDescription("Returns all local and remote Git branches");
+        git.MapPost("/switch/{branchName}", SwitchBranch)
+            .WithName("SwitchBranch")
+            .WithSummary("Switch branch")
+            .WithDescription("Switches to a different Git branch");
+        git.MapGet("/updates", CheckForUpdates)
+            .WithName("CheckForUpdates")
+            .WithSummary("Check for updates")
+            .WithDescription("Checks for available updates from remote repository");
+        git.MapPost("/pull", PullUpdates)
+            .WithName("PullUpdates")
+            .WithSummary("Pull updates")
+            .WithDescription("Pulls latest changes from remote repository");
+        git.MapGet("/version", GetVersionInfo)
+            .WithName("GetVersionInfo")
+            .WithSummary("Get version info")
+            .WithDescription("Returns detailed version information");
+
+        // Server Scaling endpoints (advanced)
+        var serverScaling = api.MapGroup("/scaling/advanced").WithTags("Auto-scaling");
+        serverScaling.MapGet("/status", GetScalingServiceStatus)
+            .WithName("GetScalingServiceStatus")
+            .WithSummary("Get scaling service status")
+            .WithDescription("Returns current scaling service status and configuration");
+        serverScaling.MapPost("/add/{count:int}", AddServersScaling)
+            .WithName("AddServersScaling")
+            .WithSummary("Add servers")
+            .WithDescription("Adds specified number of servers");
+        serverScaling.MapPost("/remove/{count:int}", RemoveServersScaling)
+            .WithName("RemoveServersScaling")
+            .WithSummary("Remove servers")
+            .WithDescription("Removes specified number of empty servers");
+        serverScaling.MapPost("/scale-to/{count:int}", ScaleToCount)
+            .WithName("ScaleToCount")
+            .WithSummary("Scale to count")
+            .WithDescription("Scales to the specified number of total servers");
+        serverScaling.MapPost("/auto-balance", AutoBalanceServers)
+            .WithName("AutoBalanceServers")
+            .WithSummary("Auto-balance servers")
+            .WithDescription("Automatically adjusts server count based on current demand");
     }
 
     private static IResult GetStatus(IGameServerManager serverManager)
@@ -2032,5 +2195,379 @@ public static class ApiEndpoints
     {
         public int MatchId { get; init; }
         public Dictionary<string, object> Stats { get; init; } = new();
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Filebeat Endpoints
+    // ═══════════════════════════════════════════════════════════════
+
+    private static IResult GetFilebeatStatus(FilebeatService filebeat)
+    {
+        return Results.Ok(filebeat.GetStatus());
+    }
+
+    private static async Task<IResult> InstallFilebeat(FilebeatService filebeat)
+    {
+        var result = await filebeat.InstallAsync();
+        return result.Success 
+            ? Results.Ok(result) 
+            : Results.Problem(result.Error ?? "Installation failed");
+    }
+
+    private static async Task<IResult> StartFilebeat(FilebeatService filebeat)
+    {
+        var success = await filebeat.StartAsync();
+        return success 
+            ? Results.Ok(new { message = "Filebeat started" })
+            : Results.Problem("Failed to start Filebeat");
+    }
+
+    private static async Task<IResult> StopFilebeat(FilebeatService filebeat)
+    {
+        var success = await filebeat.StopAsync();
+        return success 
+            ? Results.Ok(new { message = "Filebeat stopped" })
+            : Results.Problem("Failed to stop Filebeat");
+    }
+
+    private static async Task<IResult> ConfigureFilebeat(FilebeatService filebeat)
+    {
+        await filebeat.GenerateConfigAsync();
+        return Results.Ok(new { message = "Filebeat configuration generated" });
+    }
+
+    private static async Task<IResult> TestFilebeatConnection(FilebeatService filebeat)
+    {
+        var result = await filebeat.TestElasticsearchConnectionAsync();
+        return Results.Ok(result);
+    }
+
+    private record ConfigureFilebeatRequest
+    {
+        public string ElasticsearchHost { get; init; } = "localhost:9200";
+        public List<string>? LogPaths { get; init; }
+        public string? IndexPrefix { get; init; }
+    }
+
+    private record TestConnectionRequest
+    {
+        public string? Host { get; init; }
+        public string? Username { get; init; }
+        public string? Password { get; init; }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // RBAC Endpoints
+    // ═══════════════════════════════════════════════════════════════
+
+    private static IResult GetAllPermissions(RolesDatabase rolesDb)
+    {
+        return Results.Ok(rolesDb.GetAllPermissions());
+    }
+
+    private static IResult GetAllRoles(RolesDatabase rolesDb)
+    {
+        return Results.Ok(rolesDb.GetAllRoles());
+    }
+
+    private static IResult GetRole(string roleName, RolesDatabase rolesDb)
+    {
+        var role = rolesDb.GetRole(roleName);
+        return role != null ? Results.Ok(role) : Results.NotFound();
+    }
+
+    private static IResult CreateRole(
+        [FromBody] CreateRoleRequest request, 
+        RolesDatabase rolesDb)
+    {
+        var roleId = rolesDb.CreateRole(request.Name, request.Description);
+        if (roleId <= 0) return Results.BadRequest(new { error = "Role already exists or creation failed" });
+
+        if (request.Permissions?.Any() == true)
+        {
+            foreach (var perm in request.Permissions)
+            {
+                rolesDb.AssignPermissionToRole(roleId, perm);
+            }
+        }
+
+        return Results.Ok(new { message = "Role created", name = request.Name, roleId });
+    }
+
+    private static IResult DeleteRole(string roleName, RolesDatabase rolesDb)
+    {
+        var success = rolesDb.DeleteRole(roleName);
+        return success 
+            ? Results.Ok(new { message = "Role deleted" }) 
+            : Results.NotFound();
+    }
+
+    private static IResult AddPermissionsToRole(
+        string roleName, 
+        [FromBody] PermissionsRequest request, 
+        RolesDatabase rolesDb)
+    {
+        var role = rolesDb.GetRole(roleName);
+        if (role == null) return Results.NotFound(new { error = "Role not found" });
+        
+        var added = 0;
+        foreach (var perm in request.Permissions)
+        {
+            rolesDb.AssignPermissionToRole(role.Id, perm);
+            added++;
+        }
+        return Results.Ok(new { message = "Permissions added", count = added });
+    }
+
+    private static IResult RemovePermissionsFromRole(
+        string roleName, 
+        [FromBody] PermissionsRequest request, 
+        RolesDatabase rolesDb)
+    {
+        var role = rolesDb.GetRole(roleName);
+        if (role == null) return Results.NotFound(new { error = "Role not found" });
+        
+        var removed = 0;
+        foreach (var perm in request.Permissions)
+        {
+            rolesDb.RemovePermissionFromRole(role.Id, perm);
+            removed++;
+        }
+        return Results.Ok(new { message = "Permissions removed", count = removed });
+    }
+
+    private static IResult GetUserPermissions(int userId, RolesDatabase rolesDb)
+    {
+        // Get user to find their role, then get role permissions
+        var users = rolesDb.GetAllUsers();
+        var user = users.FirstOrDefault(u => u.Id == userId);
+        if (user == null) return Results.NotFound(new { error = "User not found" });
+        
+        if (user.RoleId.HasValue)
+        {
+            var permissions = rolesDb.GetRolePermissions(user.RoleId.Value);
+            return Results.Ok(new { userId, permissions });
+        }
+        
+        return Results.Ok(new { userId, permissions = new List<string>() });
+    }
+
+    private static IResult AssignRoleToUser(
+        int userId, 
+        [FromBody] AssignRoleRequest request, 
+        RolesDatabase rolesDb)
+    {
+        var role = rolesDb.GetRole(request.RoleName);
+        if (role == null) return Results.NotFound(new { error = "Role not found" });
+        
+        var success = rolesDb.UpdateUser(userId, roleId: role.Id);
+        return success 
+            ? Results.Ok(new { message = "Role assigned" })
+            : Results.BadRequest(new { error = "Failed to assign role" });
+    }
+
+    private static IResult RemoveRoleFromUser(int userId, string roleName, RolesDatabase rolesDb)
+    {
+        var success = rolesDb.UpdateUser(userId, roleId: null);
+        return success 
+            ? Results.Ok(new { message = "Role removed" })
+            : Results.NotFound();
+    }
+
+    private record CreateRoleRequest
+    {
+        public string Name { get; init; } = "";
+        public string? Description { get; init; }
+        public List<string>? Permissions { get; init; }
+    }
+
+    private record PermissionsRequest
+    {
+        public List<string> Permissions { get; init; } = new();
+    }
+
+    private record AssignRoleRequest
+    {
+        public string RoleName { get; init; } = "";
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Skipped Frame Analytics Endpoints
+    // ═══════════════════════════════════════════════════════════════
+
+    private static IResult GetGlobalFrameAnalytics(SkippedFrameTracker tracker)
+    {
+        return Results.Ok(tracker.GetGlobalAnalytics());
+    }
+
+    private static IResult GetServerFrameAnalytics(int serverId, SkippedFrameTracker tracker)
+    {
+        return Results.Ok(tracker.GetServerAnalytics(serverId));
+    }
+
+    private static IResult GetPlayerFrameStats(string playerName, SkippedFrameTracker tracker)
+    {
+        // Player stats require a server context - return all player stats across servers
+        // that match the player name (case-insensitive)
+        return Results.Ok(new { 
+            playerName, 
+            message = "Player stats are grouped by server. Use /api/diagnostics/skipped-frames/server/{id} to get player stats for a specific server." 
+        });
+    }
+
+    private static IResult ResetFrameAnalytics(SkippedFrameTracker tracker)
+    {
+        tracker.ClearAllData();
+        return Results.Ok(new { message = "Frame analytics reset" });
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Storage/File Relocation Endpoints
+    // ═══════════════════════════════════════════════════════════════
+
+    private static IResult GetStorageStatus(FileRelocatorService relocator)
+    {
+        return Results.Ok(relocator.GetStatus());
+    }
+
+    private static IResult GetStorageAnalytics(FileRelocatorService relocator)
+    {
+        return Results.Ok(relocator.GetStorageAnalytics());
+    }
+
+    private static async Task<IResult> RelocateOldFiles(
+        [FromBody] RelocateRequest? request,
+        FileRelocatorService relocator)
+    {
+        var result = await relocator.RelocateOldFilesAsync(
+            request?.OlderThanDays,
+            request?.FilePattern);
+        
+        return Results.Ok(result);
+    }
+
+    private static async Task<IResult> CleanupArchiveStorage(
+        [FromBody] CleanupRequest? request,
+        FileRelocatorService relocator)
+    {
+        var result = await relocator.CleanupArchiveAsync(
+            request?.OlderThanDays,
+            request?.FilePattern);
+        
+        return Results.Ok(result);
+    }
+
+    private static async Task<IResult> RelocateLogs(
+        [FromBody] RelocateRequest? request,
+        FileRelocatorService relocator)
+    {
+        var result = await relocator.RelocateLogsAsync(request?.OlderThanDays);
+        return Results.Ok(result);
+    }
+
+    private record RelocateRequest
+    {
+        public int? OlderThanDays { get; init; }
+        public string? FilePattern { get; init; }
+    }
+
+    private record CleanupRequest
+    {
+        public int? OlderThanDays { get; init; }
+        public string? FilePattern { get; init; }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Git/Version Management Endpoints
+    // ═══════════════════════════════════════════════════════════════
+
+    private static async Task<IResult> GetCurrentBranch(GitBranchService gitService)
+    {
+        var branch = await gitService.GetCurrentBranchAsync();
+        return Results.Ok(branch);
+    }
+
+    private static async Task<IResult> GetAllBranches(GitBranchService gitService)
+    {
+        var branches = await gitService.GetAllBranchesAsync();
+        return Results.Ok(new { branches });
+    }
+
+    private static async Task<IResult> SwitchBranch(string branchName, GitBranchService gitService)
+    {
+        var result = await gitService.SwitchBranchAsync(branchName);
+        return result.Success 
+            ? Results.Ok(result) 
+            : Results.Problem(result.Error ?? "Failed to switch branch");
+    }
+
+    private static async Task<IResult> CheckForUpdates(GitBranchService gitService)
+    {
+        var result = await gitService.CheckForUpdatesAsync();
+        return Results.Ok(result);
+    }
+
+    private static async Task<IResult> PullUpdates(GitBranchService gitService)
+    {
+        var result = await gitService.PullLatestAsync();
+        return result.Success 
+            ? Results.Ok(result) 
+            : Results.Problem(result.Error ?? "Failed to pull updates");
+    }
+
+    private static async Task<IResult> GetVersionInfo(GitBranchService gitService)
+    {
+        var info = await gitService.GetVersionInfoAsync();
+        return Results.Ok(info);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Server Scaling Endpoints
+    // ═══════════════════════════════════════════════════════════════
+
+    private static IResult GetScalingServiceStatus(ServerScalingService scalingService)
+    {
+        return Results.Ok(scalingService.GetStatus());
+    }
+
+    private static async Task<IResult> AddServersScaling(int count, ServerScalingService scalingService)
+    {
+        if (count < 1 || count > 10)
+            return Results.BadRequest(new { error = "Count must be between 1 and 10" });
+        
+        var result = await scalingService.AddServersAsync(count);
+        return result.Success 
+            ? Results.Ok(result) 
+            : Results.Problem(result.Error ?? "Failed to add servers");
+    }
+
+    private static async Task<IResult> RemoveServersScaling(int count, ServerScalingService scalingService)
+    {
+        if (count < 1 || count > 10)
+            return Results.BadRequest(new { error = "Count must be between 1 and 10" });
+        
+        var result = await scalingService.RemoveServersAsync(count);
+        return result.Success 
+            ? Results.Ok(result) 
+            : Results.Problem(result.Error ?? "Failed to remove servers");
+    }
+
+    private static async Task<IResult> ScaleToCount(int count, ServerScalingService scalingService)
+    {
+        if (count < 0 || count > 50)
+            return Results.BadRequest(new { error = "Count must be between 0 and 50" });
+        
+        var result = await scalingService.ScaleToAsync(count);
+        return result.Success 
+            ? Results.Ok(result) 
+            : Results.Problem(result.Error ?? "Failed to scale servers");
+    }
+
+    private static async Task<IResult> AutoBalanceServers(ServerScalingService scalingService)
+    {
+        var result = await scalingService.AutoBalanceAsync();
+        return result.Success 
+            ? Results.Ok(result) 
+            : Results.Problem(result.Error ?? "Failed to auto-balance servers");
     }
 }

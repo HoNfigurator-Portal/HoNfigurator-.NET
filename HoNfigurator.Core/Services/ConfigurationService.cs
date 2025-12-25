@@ -8,6 +8,7 @@ public interface IConfigurationService
     Task<HoNConfiguration> LoadConfigurationAsync();
     Task SaveConfigurationAsync(HoNConfiguration config);
     Task SaveConfigurationAsync();
+    Task ReloadAsync(CancellationToken cancellationToken = default);
     HoNConfiguration Configuration { get; }
 }
 
@@ -58,5 +59,10 @@ public class ConfigurationService : IConfigurationService
 
         var json = JsonSerializer.Serialize(_configuration, JsonOptions);
         await File.WriteAllTextAsync(_configPath, json);
+    }
+
+    public async Task ReloadAsync(CancellationToken cancellationToken = default)
+    {
+        await LoadConfigurationAsync();
     }
 }

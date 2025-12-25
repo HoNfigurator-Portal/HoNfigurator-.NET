@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging;
 namespace HoNfigurator.Core.Connectors;
 
 /// <summary>
-/// Replay upload status codes (matches Python's enum)
+/// Replay upload status codes matching NEXUS protocol
 /// </summary>
 public enum ReplayUploadStatus : byte
 {
@@ -20,7 +20,8 @@ public enum ReplayUploadStatus : byte
 }
 
 /// <summary>
-/// Manages connection to the HoN Chat Server for server registration and replay handling
+/// Manages connection to the HoN Chat Server (NEXUS TRANSMUTANSTEIN.ChatServer) for server registration and replay handling.
+/// Implements Server Manager protocol (0x1600-0x1700 range) per NEXUS ChatProtocol.
 /// </summary>
 public interface IChatServerConnector
 {
@@ -28,9 +29,25 @@ public interface IChatServerConnector
     int? ServerId { get; }
     Task<bool> ConnectAsync(string host, int port, CancellationToken cancellationToken = default);
     Task DisconnectAsync();
+    
+    /// <summary>
+    /// Sends handshake request (NET_CHAT_SM_CONNECT 0x1600)
+    /// </summary>
     Task<bool> SendHandshakeAsync(int serverId, string sessionId);
+    
+    /// <summary>
+    /// Sends server status update (NET_CHAT_SM_STATUS 0x1602)
+    /// </summary>
     Task SendServerInfoAsync(int serverId, string username, string region, string serverName, string version, string ipAddress, int udpPingPort);
+    
+    /// <summary>
+    /// Sends keepalive ping (NET_CHAT_PING 0x2A00)
+    /// </summary>
     Task SendHeartbeatAsync();
+    
+    /// <summary>
+    /// Sends replay upload status update (NET_CHAT_SM_UPLOAD_UPDATE 0x1603)
+    /// </summary>
     Task SendReplayStatusUpdateAsync(int matchId, int accountId, ReplayUploadStatus status, string? downloadLink = null);
 }
 
@@ -190,25 +207,16 @@ public class ChatServerConnector : IChatServerConnector, IDisposable
         {
             ServerId = serverId;
 
-            // Python: struct.pack('<H', msg_type) + struct.pack('<I', server_id) + session_id.encode('utf-8') + b'\x00' + struct.pack('<I', 70)
-            // 0x1600 = handshake request
-            var packetData = new List<byte>();
-            
-            // Packet type
-            packetData.AddRange(BitConverter.GetBytes((ushort)0x1600));
-            // Server ID (4 bytes)
-            packetData.AddRange(BitConverter.GetBytes(serverId));
-            // Session ID (null-terminated string)
-            packetData.AddRange(Encoding.UTF8.GetBytes(sessionId));
-            packetData.Add(0x00);
-            // Protocol version (4 bytes, value 70 = 0x46)
-            packetData.AddRange(BitConverter.GetBytes(70));
+            // Build packet using ChatBuffer matching NEXUS format
+            // NET_CHAT_SM_CONNECT (0x1600): [command:2][server_id:4][session:string][protocol_version:4]
+            var buffer = new ChatBuffer();
+            buffer.WriteCommand(ChatProtocol.ServerManagerToChatServer.NET_CHAT_SM_CONNECT);
+            buffer.WriteInt32(serverId);
+            buffer.WriteString(sessionId);
+            buffer.WriteUInt32(ChatProtocol.CHAT_PROTOCOL_EXTERNAL_VERSION); // Protocol version 68
 
-            // Prepend length
-            var packet = new byte[2 + packetData.Count];
-            BitConverter.GetBytes((ushort)packetData.Count).CopyTo(packet, 0);
-            packetData.ToArray().CopyTo(packet, 2);
-
+            // Send with length prefix
+            var packet = buffer.BuildWithLengthPrefix();
             await _stream.WriteAsync(packet);
             await _stream.FlushAsync();
 
@@ -237,54 +245,41 @@ public class ChatServerConnector : IChatServerConnector, IDisposable
         _ipAddress = ipAddress;
         _udpPingPort = udpPingPort;
 
-        // Python format:
-        // msg_type = 0x1602
-        // packet_data += server_id (4 bytes)
-        // packet_data += username + '\x00'
-        // packet_data += region + '\x00'
-        // packet_data += server_name + '\x00'  (format: "name 0")
-        // packet_data += version + '\x00'
-        // packet_data += ip_addr + '\x00'
-        // packet_data += udp_ping_port (2 bytes)
-        // packet_data += '\x00' (running status: 0 = running, 1 = shutting down)
-
-        var packetData = new List<byte>();
+        // Build packet using ChatBuffer matching NEXUS format
+        // NET_CHAT_SM_STATUS (0x1602): [command:2][server_id:4][username:string][region:string][server_name:string][version:string][ip:string][port:2][status:1]
+        var buffer = new ChatBuffer();
+        buffer.WriteCommand(ChatProtocol.ServerManagerToChatServer.NET_CHAT_SM_STATUS);
+        buffer.WriteInt32(serverId);
         
-        // Packet type 0x1602
-        packetData.AddRange(BitConverter.GetBytes((ushort)0x1602));
-        // Server ID
-        packetData.AddRange(BitConverter.GetBytes(serverId));
-        // Username (ensure colon suffix like Python)
+        // Username with colon suffix (Server Manager format)
         var formattedUsername = username.EndsWith(":") ? username : username + ":";
-        packetData.AddRange(Encoding.UTF8.GetBytes(formattedUsername));
-        packetData.Add(0x00);
+        buffer.WriteString(formattedUsername);
+        
         // Region
-        packetData.AddRange(Encoding.UTF8.GetBytes(region));
-        packetData.Add(0x00);
+        buffer.WriteString(region);
+        
         // Server name (format: "name 0")
         var formattedServerName = serverName.EndsWith(" 0") ? serverName : serverName + " 0";
-        packetData.AddRange(Encoding.UTF8.GetBytes(formattedServerName));
-        packetData.Add(0x00);
+        buffer.WriteString(formattedServerName);
+        
         // Version
-        packetData.AddRange(Encoding.UTF8.GetBytes(version));
-        packetData.Add(0x00);
+        buffer.WriteString(version);
+        
         // IP Address
-        packetData.AddRange(Encoding.UTF8.GetBytes(ipAddress));
-        packetData.Add(0x00);
+        buffer.WriteString(ipAddress);
+        
         // UDP Ping Port (2 bytes)
-        packetData.AddRange(BitConverter.GetBytes((ushort)udpPingPort));
-        // Running status (0 = running)
-        packetData.Add(0x00);
+        buffer.WriteUInt16((ushort)udpPingPort);
+        
+        // Running status (0 = running, 1 = shutting down)
+        buffer.WriteUInt8(0x00);
 
-        // Prepend length
-        var packet = new byte[2 + packetData.Count];
-        BitConverter.GetBytes((ushort)packetData.Count).CopyTo(packet, 0);
-        packetData.ToArray().CopyTo(packet, 2);
-
+        // Send with length prefix
+        var packet = buffer.BuildWithLengthPrefix();
         await _stream.WriteAsync(packet);
         await _stream.FlushAsync();
 
-        _logger.LogDebug(">>> [MGR|CHAT] [0x1602] Sent server info - User: {Username}, Region: {Region}, Server: {ServerName}, IP: {IpAddress}:{Port}",
+        _logger.LogDebug(">>> [MGR|CHAT] [NET_CHAT_SM_STATUS] Sent server info - User: {Username}, Region: {Region}, Server: {ServerName}, IP: {IpAddress}:{Port}",
             formattedUsername, region, formattedServerName, ipAddress, udpPingPort);
 
         // Start keepalive task after sending server info (like Python does after 0x1700 response)
@@ -302,7 +297,7 @@ public class ChatServerConnector : IChatServerConnector, IDisposable
     {
         // Python sends keepalive every 15 seconds:
         // self.writer.write(b'\x02\x00')  # length
-        // self.writer.write(b'\x00*')     # packet type 0x2A00
+        // NET_CHAT_PING (0x2A00) - Keepalive ping every 15 seconds
         
         while (!cancellationToken.IsCancellationRequested && IsConnected)
         {
@@ -317,16 +312,14 @@ public class ChatServerConnector : IChatServerConnector, IDisposable
 
                 if (_stream != null && IsConnected)
                 {
-                    // Send keepalive: length (2 bytes) + packet type 0x2A00
-                    // Python: b'\x02\x00' + b'\x00*' = [0x02, 0x00, 0x00, 0x2A]
-                    // But \x00* in Python means 0x00 + ord('*') = 0x00 + 0x2A
-                    // So full packet is: 0x02 0x00 0x00 0x2A
-                    await _stream.WriteAsync(new byte[] { 0x02, 0x00 }, cancellationToken);
-                    await _stream.FlushAsync(cancellationToken);
-                    await _stream.WriteAsync(new byte[] { 0x00, 0x2A }, cancellationToken);
+                    // Build and send NET_CHAT_PING using ChatBuffer
+                    var buffer = new ChatBuffer();
+                    buffer.WriteCommand(ChatProtocol.Bidirectional.NET_CHAT_PING);
+                    var packet = buffer.BuildWithLengthPrefix();
+                    await _stream.WriteAsync(packet, cancellationToken);
                     await _stream.FlushAsync(cancellationToken);
 
-                    _logger.LogDebug(">>> [MGR|CHAT] Sent keepalive");
+                    _logger.LogDebug(">>> [MGR|CHAT] Sent NET_CHAT_PING keepalive");
                 }
             }
             catch (OperationCanceledException)
@@ -348,10 +341,13 @@ public class ChatServerConnector : IChatServerConnector, IDisposable
             throw new InvalidOperationException("Not connected to chat server");
         }
 
-        // Heartbeat is same as keepalive
-        await _stream.WriteAsync(new byte[] { 0x02, 0x00, 0x00, 0x2A });
+        // Send NET_CHAT_PING
+        var buffer = new ChatBuffer();
+        buffer.WriteCommand(ChatProtocol.Bidirectional.NET_CHAT_PING);
+        var packet = buffer.BuildWithLengthPrefix();
+        await _stream.WriteAsync(packet);
         await _stream.FlushAsync();
-        _logger.LogDebug(">>> [MGR|CHAT] Sent heartbeat");
+        _logger.LogDebug(">>> [MGR|CHAT] Sent NET_CHAT_PING heartbeat");
     }
 
     public async Task SendReplayStatusUpdateAsync(int matchId, int accountId, ReplayUploadStatus status, string? downloadLink = null)
@@ -364,43 +360,26 @@ public class ChatServerConnector : IChatServerConnector, IDisposable
 
         try
         {
-            // Python format for 0x1603:
-            // packet_data = struct.pack('<H', msg_type)  # 0x1603
-            // packet_data += struct.pack('<I', match_id)  # 4 bytes
-            // packet_data += struct.pack('<I', account_id)  # 4 bytes
-            // packet_data += struct.pack('<B', status)  # 1 byte
-            // if status == UPLOAD_COMPLETE: packet_data += b'\x00'
-
-            var packetData = new List<byte>();
-            
-            // Packet type 0x1603
-            packetData.AddRange(BitConverter.GetBytes((ushort)0x1603));
-            // Match ID (4 bytes)
-            packetData.AddRange(BitConverter.GetBytes(matchId));
-            // Account ID (4 bytes)
-            packetData.AddRange(BitConverter.GetBytes(accountId));
-            // Status (1 byte)
-            packetData.Add((byte)status);
+            // Build NET_CHAT_SM_UPLOAD_UPDATE (0x1603) using ChatBuffer
+            // Format: [command:2][match_id:4][account_id:4][status:1][download_link:string?]
+            var buffer = new ChatBuffer();
+            buffer.WriteCommand(ChatProtocol.ServerManagerToChatServer.NET_CHAT_SM_UPLOAD_UPDATE);
+            buffer.WriteInt32(matchId);
+            buffer.WriteInt32(accountId);
+            buffer.WriteUInt8((byte)status);
             
             // Add download link for completed/already uploaded statuses
             if (status == ReplayUploadStatus.UploadComplete || status == ReplayUploadStatus.AlreadyUploaded)
             {
-                if (!string.IsNullOrEmpty(downloadLink))
-                {
-                    packetData.AddRange(Encoding.UTF8.GetBytes(downloadLink));
-                }
-                packetData.Add(0x00);
+                buffer.WriteString(downloadLink);
             }
 
-            // Prepend length
-            var packet = new byte[2 + packetData.Count];
-            BitConverter.GetBytes((ushort)packetData.Count).CopyTo(packet, 0);
-            packetData.ToArray().CopyTo(packet, 2);
-
+            // Send with length prefix
+            var packet = buffer.BuildWithLengthPrefix();
             await _stream.WriteAsync(packet);
             await _stream.FlushAsync();
 
-            _logger.LogDebug(">>> [MGR|CHAT] [0x1603] Sent replay status - Match: {MatchId}, Account: {AccountId}, Status: {Status}",
+            _logger.LogDebug(">>> [MGR|CHAT] [NET_CHAT_SM_UPLOAD_UPDATE] Sent replay status - Match: {MatchId}, Account: {AccountId}, Status: {Status}",
                 matchId, accountId, status);
         }
         catch (Exception ex)
@@ -449,19 +428,8 @@ public class ChatServerConnector : IChatServerConnector, IDisposable
                 // Process packet (pass data after packet type)
                 await _parser.HandlePacketAsync(packetType, packetData.AsMemory(2), "receiving");
 
-                // If handshake accepted (0x1700), we need to send server info
-                if (packetType == 0x1700 && _handshakeAccepted && ServerId.HasValue && _username != null)
-                {
-                    await SendServerInfoAsync(ServerId.Value, _username, _region ?? "US", _serverName ?? "HoNfigurator", 
-                        _version ?? "4.10.1", _ipAddress ?? "0.0.0.0", _udpPingPort);
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-            catch (IOException ex) when (ex.InnerException is SocketException)
-            {
+                // If handshake accepted (NET_CHAT_SM_ACCEPT 0x1700), we need to send server info
+                if (packetType == ChatProtocol.ChatServerToServerManager.NET_CHAT_SM_ACCEPT && _handshakeAccepted && ServerId.HasValue && _username != null)
                 _logger.LogWarning("Chat server connection reset");
                 break;
             }

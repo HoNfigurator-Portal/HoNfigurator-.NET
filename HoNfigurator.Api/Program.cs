@@ -13,6 +13,7 @@ using HoNfigurator.Core.Charts;
 using HoNfigurator.Core.Parsing;
 using HoNfigurator.Core.Services;
 using HoNfigurator.Core.Statistics;
+using HoNfigurator.Core.Diagnostics;
 using HoNfigurator.GameServer.Services;
 using Scalar.AspNetCore;
 using HoNfigurator.Core.Models;
@@ -214,6 +215,19 @@ builder.Services.AddSingleton<ICliCommandService>(sp =>
 // Register notification and chart services
 builder.Services.AddSingleton<INotificationService, NotificationService>();
 builder.Services.AddSingleton<IChartDataService, ChartDataService>();
+
+// Register new services from Python port (advanced features)
+builder.Services.AddSingleton<SkippedFrameTracker>();
+builder.Services.AddSingleton<FilebeatService>();
+builder.Services.AddSingleton<FileRelocatorService>();
+builder.Services.AddSingleton<ServerScalingService>();
+builder.Services.AddSingleton<GitBranchService>();
+builder.Services.AddSingleton<RolesDatabase>(sp =>
+{
+    var logger = sp.GetRequiredService<ILogger<RolesDatabase>>();
+    var dbPath = Path.Combine(AppContext.BaseDirectory, "data", "roles.db");
+    return new RolesDatabase(logger, dbPath);
+});
 
 // Add hosted services
 builder.Services.AddHostedService<StatusBroadcastService>();
