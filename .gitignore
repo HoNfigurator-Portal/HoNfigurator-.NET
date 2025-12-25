@@ -75,5 +75,21 @@ $RECYCLE.BIN/
 # **/config/config.json
 
 # Replays
+**/replays/*
+!**/replays/.gitkeep
 **/replays/archive/*
 !**/replays/archive/.gitkeep
+
+# Uploaded replays
+**/uploads/
+
+# Backup files
+*.bak
+*_backup*
+
+# SQLite database
+*.db
+*.db-shm
+*.db-wal
+**/data/*.json
+!**/data/.gitkeep
