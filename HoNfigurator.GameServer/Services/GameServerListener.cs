@@ -46,7 +46,7 @@ public class GameServerListener : IGameServerListener
     private readonly IMqttHandler? _mqttHandler;
     private readonly IDiscordBotService? _discordBot;
     private readonly IMatchStatisticsService? _statisticsService;
-    private readonly IReplayUploadService? _replayUploadService;
+    private readonly ReplayManager? _replayManager;
     private TcpListener? _listener;
     private CancellationTokenSource? _cts;
     private readonly ConcurrentDictionary<int, TcpClient> _clientConnections = new();
@@ -65,7 +65,7 @@ public class GameServerListener : IGameServerListener
         IMqttHandler? mqttHandler = null,
         IDiscordBotService? discordBot = null,
         IMatchStatisticsService? statisticsService = null,
-        IReplayUploadService? replayUploadService = null)
+        ReplayManager? replayManager = null)
     {
         _logger = logger;
         _serverManager = serverManager;
@@ -74,7 +74,7 @@ public class GameServerListener : IGameServerListener
         _mqttHandler = mqttHandler;
         _discordBot = discordBot;
         _statisticsService = statisticsService;
-        _replayUploadService = replayUploadService;
+        _replayManager = replayManager;
     }
 
     public async Task StartAsync(int port)
@@ -639,9 +639,9 @@ public class GameServerListener : IGameServerListener
                     }
                 }
                 
-                // Auto-upload replay if enabled
-                if (_replayUploadService != null && _replayUploadService.Settings.Enabled && 
-                    _replayUploadService.Settings.AutoUploadOnMatchEnd)
+                // Auto-upload replay if enabled and ReplayManager available
+                if (_replayManager != null && _config.ApplicationData?.ReplayUpload?.Enabled == true && 
+                    _config.ApplicationData?.ReplayUpload?.AutoUploadOnMatchEnd == true)
                 {
                     _ = Task.Run(async () =>
                     {
@@ -651,23 +651,18 @@ public class GameServerListener : IGameServerListener
                             var replayPath = FindLatestReplay(serverId);
                             if (!string.IsNullOrEmpty(replayPath) && File.Exists(replayPath))
                             {
-                                var result = await _replayUploadService.UploadReplayAsync(
-                                    replayPath, 
-                                    $"server{serverId}_{DateTime.UtcNow:yyyyMMddHHmmss}");
+                                var matchId = _activeMatchIds.TryGetValue(serverId, out var id) ? id : 0;
+                                var fileName = Path.GetFileName(replayPath);
+                                
+                                // Queue for upload to master server
+                                _replayManager.QueueUpload(fileName, matchId);
                                     
-                                if (result.Success)
-                                {
-                                    _logger.LogInformation("Replay auto-uploaded: {Url}", result.Url);
-                                }
-                                else
-                                {
-                                    _logger.LogWarning("Replay auto-upload failed: {Error}", result.Error);
-                                }
+                                _logger.LogInformation("Replay queued for upload: {FileName}", fileName);
                             }
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogError(ex, "Failed to auto-upload replay for Server #{ServerId}", serverId);
+                            _logger.LogError(ex, "Failed to queue replay upload for Server #{ServerId}", serverId);
                         }
                     });
                 }

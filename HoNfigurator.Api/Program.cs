@@ -130,12 +130,19 @@ builder.Services.AddSingleton<IMatchStatisticsService>(sp =>
     return new MatchStatisticsService(logger);
 });
 
-// Register replay upload service (must be before GameServerListener)
-builder.Services.AddSingleton<IReplayUploadService>(sp =>
+// Register ReplayManager (must be before GameServerListener)
+builder.Services.AddSingleton<ReplayManager>(sp =>
 {
-    var logger = sp.GetRequiredService<ILogger<ReplayUploadService>>();
+    var logger = sp.GetRequiredService<ILogger<ReplayManager>>();
     var config = sp.GetRequiredService<HoNConfiguration>();
-    return new ReplayUploadService(logger, config);
+    var replaysPath = Path.Combine(AppContext.BaseDirectory, "replays");
+    var manager = new ReplayManager(logger, replaysPath);
+    // Configure for master server uploads if available
+    if (!string.IsNullOrEmpty(config.HonData?.MasterServer))
+    {
+        manager.Configure(config.HonData.MasterServer, config.HonData?.Login, config.HonData?.Password);
+    }
+    return manager;
 });
 
 // Register GameServerListener for receiving status updates from game servers
@@ -148,9 +155,9 @@ builder.Services.AddSingleton<IGameServerListener>(sp =>
     var mqttHandler = sp.GetRequiredService<IMqttHandler>();
     var discordBot = sp.GetRequiredService<IDiscordBotService>();
     var statisticsService = sp.GetRequiredService<IMatchStatisticsService>();
-    var replayUploadService = sp.GetRequiredService<IReplayUploadService>();
+    var replayManager = sp.GetRequiredService<ReplayManager>();
     return new GameServerListener(logger, serverManager, logReader, config, mqttHandler, 
-        discordBot, statisticsService, replayUploadService);
+        discordBot, statisticsService, replayManager);
 });
 
 // Register core services
@@ -159,7 +166,7 @@ builder.Services.AddSingleton<MatchParser>();
 builder.Services.AddSingleton<ScheduledTasksService>();
 builder.Services.AddSingleton<CowMasterService>();
 builder.Services.AddSingleton<GameEventDispatcher>();
-builder.Services.AddSingleton<ReplayManager>();
+// Note: ReplayManager is registered above with configuration
 builder.Services.AddSingleton<BanManager>();
 builder.Services.AddSingleton<AuthService>(sp => new AuthService(sp.GetRequiredService<HoNConfiguration>()));
 builder.Services.AddSingleton<AdvancedMetricsService>();

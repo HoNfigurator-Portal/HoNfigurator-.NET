@@ -273,23 +273,27 @@ public static class ApiEndpoints
         replayUpload.MapPost("/{matchId}", UploadReplay)
             .WithName("UploadReplay")
             .WithSummary("Upload a replay")
-            .WithDescription("Uploads a replay file to cloud storage");
+            .WithDescription("Uploads a replay file and queues for master server upload");
         replayUpload.MapGet("/", GetUploadedReplays)
             .WithName("GetUploadedReplays")
             .WithSummary("List uploaded replays")
-            .WithDescription("Returns list of uploaded replays with shareable links");
-        replayUpload.MapGet("/link/{matchId}", GetShareableLink)
-            .WithName("GetShareableLink")
-            .WithSummary("Get shareable link")
-            .WithDescription("Returns the shareable link for a replay");
-        replayUpload.MapDelete("/{matchId}", DeleteUploadedReplay)
+            .WithDescription("Returns list of stored replays");
+        replayUpload.MapGet("/info/{fileName}", GetReplayInfo)
+            .WithName("GetReplayInfo")
+            .WithSummary("Get replay info")
+            .WithDescription("Returns info for a specific replay");
+        replayUpload.MapDelete("/{fileName}", DeleteUploadedReplay)
             .WithName("DeleteUploadedReplay")
             .WithSummary("Delete uploaded replay")
-            .WithDescription("Deletes an uploaded replay from cloud storage");
-        replayUpload.MapGet("/settings", GetUploadSettings)
-            .WithName("GetUploadSettings")
-            .WithSummary("Get upload settings")
-            .WithDescription("Returns current replay upload settings");
+            .WithDescription("Deletes a stored replay file");
+        replayUpload.MapGet("/stats", GetUploadReplayStats)
+            .WithName("GetUploadReplayStats")
+            .WithSummary("Get replay stats")
+            .WithDescription("Returns replay storage statistics");
+        replayUpload.MapPost("/process-pending", ProcessPendingUploads)
+            .WithName("ProcessPendingUploads")
+            .WithSummary("Process pending uploads")
+            .WithDescription("Processes pending master server uploads");
 
         // Events endpoints
         var events = api.MapGroup("/events").WithTags("Events");
@@ -1639,7 +1643,7 @@ public static class ApiEndpoints
     // Replay Upload Endpoints
     // ═══════════════════════════════════════════════════════════════
 
-    private static async Task<IResult> UploadReplay(string matchId, HttpRequest request, IReplayUploadService uploadService)
+    private static async Task<IResult> UploadReplay(string matchId, HttpRequest request, ReplayManager replayManager)
     {
         if (!request.HasFormContentType)
             return Results.BadRequest(new { error = "Expected form data with replay file" });
@@ -1654,49 +1658,67 @@ public static class ApiEndpoints
         await file.CopyToAsync(ms);
         var data = ms.ToArray();
 
-        var result = await uploadService.UploadReplayAsync(data, matchId, file.FileName);
+        // Parse match ID
+        if (!long.TryParse(matchId, out var mId))
+            return Results.BadRequest(new { error = "Invalid match ID" });
+
+        var fileName = await replayManager.SaveReplayAsync(mId, data);
         
-        if (result.Success)
+        if (fileName != null)
+        {
+            // Queue for master server upload
+            replayManager.QueueUpload(fileName, mId);
             return Results.Ok(new { 
                 success = true, 
-                url = result.Url, 
-                shareableLink = result.ShareableLink,
-                fileSizeBytes = result.FileSizeBytes
+                fileName,
+                fileSizeBytes = data.Length
             });
+        }
         
-        return Results.BadRequest(new { error = result.Error });
+        return Results.BadRequest(new { error = "Failed to save replay" });
     }
 
-    private static async Task<IResult> GetUploadedReplays([FromQuery] int count, IReplayUploadService uploadService)
+    private static IResult GetUploadedReplays([FromQuery] int count, ReplayManager replayManager)
     {
-        var replays = await uploadService.GetUploadedReplaysAsync(count > 0 ? count : 50);
+        var replays = replayManager.GetReplays(count > 0 ? count : 50);
         return Results.Ok(new { replays, count = replays.Count });
     }
 
-    private static async Task<IResult> GetShareableLink(string matchId, IReplayUploadService uploadService)
+    private static IResult GetReplayInfo(string fileName, ReplayManager replayManager)
     {
-        var link = await uploadService.GetShareableLinkAsync(matchId);
-        if (link == null)
+        var replay = replayManager.GetReplay(fileName);
+        if (replay == null)
             return Results.NotFound(new { error = "Replay not found" });
-        return Results.Ok(new { matchId, shareableLink = link });
+        return Results.Ok(replay);
     }
 
-    private static async Task<IResult> DeleteUploadedReplay(string matchId, IReplayUploadService uploadService)
+    private static IResult DeleteUploadedReplay(string fileName, ReplayManager replayManager)
     {
-        var result = await uploadService.DeleteUploadedReplayAsync(matchId);
+        var result = replayManager.DeleteReplay(fileName);
         if (result)
             return Results.Ok(new { success = true, message = "Replay deleted" });
         return Results.NotFound(new { error = "Replay not found" });
     }
 
-    private static IResult GetUploadSettings(IReplayUploadService uploadService)
+    private static IResult GetUploadReplayStats(ReplayManager replayManager)
     {
-        var settings = uploadService.Settings;
+        var stats = replayManager.GetStats();
         return Results.Ok(new {
-            enabled = settings.Enabled,
-            provider = settings.Provider,
-            autoUploadOnMatchEnd = settings.AutoUploadOnMatchEnd,
-            baseUrl = settings.BaseUrl
+            totalReplays = stats.TotalReplays,
+            totalSizeMb = stats.TotalSizeMb,
+            archivedReplays = stats.ArchivedReplays,
+            archivedSizeMb = stats.ArchivedSizeMb,
+            pendingUploads = replayManager.GetPendingUploadCount()
+        });
+    }
+
+    private static async Task<IResult> ProcessPendingUploads(ReplayManager replayManager)
+    {
+        var result = await replayManager.ProcessPendingUploadsAsync();
+        return Results.Ok(new {
+            success = result.Success,
+            uploaded = result.Uploaded,
+            failed = result.Failed
         });
     }
 

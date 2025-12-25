@@ -412,6 +412,371 @@ public class HealthCheckManager
     /// </summary>
     public bool IsHealthy() => _lastResults.Count == 0 || _lastResults.Values.All(r => r.IsHealthy);
 
+    /// <summary>
+    /// Check HoN installation health
+    /// Port of Python's healthcheck_manager.py installation checks
+    /// </summary>
+    public Task<HealthCheckResult> CheckHoNInstallationAsync(CancellationToken cancellationToken = default)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var issues = new List<string>();
+
+        try
+        {
+            var installDir = _config.HonData?.HonInstallDirectory;
+            
+            if (string.IsNullOrEmpty(installDir))
+            {
+                return Task.FromResult(new HealthCheckResult
+                {
+                    Name = "HoNInstallation",
+                    IsHealthy = false,
+                    Status = "NotConfigured",
+                    Message = "HoN install directory not configured"
+                });
+            }
+
+            if (!Directory.Exists(installDir))
+            {
+                return Task.FromResult(new HealthCheckResult
+                {
+                    Name = "HoNInstallation",
+                    IsHealthy = false,
+                    Status = "NotFound",
+                    Message = $"Install directory not found: {installDir}"
+                });
+            }
+
+            // Check for required files
+            var requiredFiles = OperatingSystem.IsWindows()
+                ? new[] { "hon_x64.exe", "k2_x64.exe" }
+                : new[] { "hon_x64-server", "hon_x64" };
+
+            var foundExe = false;
+            foreach (var file in requiredFiles)
+            {
+                if (File.Exists(Path.Combine(installDir, file)))
+                {
+                    foundExe = true;
+                    break;
+                }
+            }
+
+            if (!foundExe)
+            {
+                issues.Add("No HoN executable found");
+            }
+
+            // Check for game data directories
+            var requiredDirs = new[] { "game", "base" };
+            foreach (var dir in requiredDirs)
+            {
+                if (!Directory.Exists(Path.Combine(installDir, dir)))
+                {
+                    issues.Add($"Missing directory: {dir}");
+                }
+            }
+
+            // Check disk space in install directory
+            var driveInfo = new DriveInfo(Path.GetPathRoot(installDir) ?? "C:");
+            var freeGb = driveInfo.AvailableFreeSpace / 1024 / 1024 / 1024;
+            if (freeGb < 2)
+            {
+                issues.Add($"Low disk space: {freeGb}GB free");
+            }
+
+            sw.Stop();
+
+            var isHealthy = !issues.Any();
+            return Task.FromResult(new HealthCheckResult
+            {
+                Name = "HoNInstallation",
+                IsHealthy = isHealthy,
+                Status = isHealthy ? "OK" : "Issues",
+                Message = isHealthy ? $"Install directory: {installDir}" : string.Join("; ", issues),
+                ResponseTime = sw.Elapsed,
+                Data = new Dictionary<string, object>
+                {
+                    ["InstallDirectory"] = installDir,
+                    ["DiskFreeGB"] = freeGb,
+                    ["Issues"] = issues
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            return Task.FromResult(new HealthCheckResult
+            {
+                Name = "HoNInstallation",
+                IsHealthy = false,
+                Status = "Error",
+                Message = ex.Message,
+                ResponseTime = sw.Elapsed
+            });
+        }
+    }
+
+    /// <summary>
+    /// Check server lag/latency to master server
+    /// Port of Python's lag detection
+    /// </summary>
+    public async Task<HealthCheckResult> CheckLagAsync(CancellationToken cancellationToken = default)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var pingResults = new List<long>();
+
+        try
+        {
+            var masterServer = _config.HonData?.MasterServer ?? "api.kongor.net";
+            var host = masterServer.Replace("http://", "").Replace("https://", "").Split('/')[0];
+
+            using var ping = new Ping();
+            
+            // Multiple ping samples like Python version
+            for (int i = 0; i < 5; i++)
+            {
+                try
+                {
+                    var reply = await ping.SendPingAsync(host, 2000);
+                    if (reply.Status == IPStatus.Success)
+                    {
+                        pingResults.Add(reply.RoundtripTime);
+                    }
+                }
+                catch { }
+                
+                if (i < 4) await Task.Delay(200, cancellationToken);
+            }
+
+            sw.Stop();
+
+            if (!pingResults.Any())
+            {
+                return new HealthCheckResult
+                {
+                    Name = "Lag",
+                    IsHealthy = false,
+                    Status = "Timeout",
+                    Message = $"Could not reach {host}",
+                    ResponseTime = sw.Elapsed
+                };
+            }
+
+            var avgPing = pingResults.Average();
+            var maxPing = pingResults.Max();
+            var minPing = pingResults.Min();
+            var jitter = maxPing - minPing;
+
+            // Thresholds from Python version
+            var isHealthy = avgPing < 150 && jitter < 50;
+            var status = avgPing < 50 ? "Excellent" :
+                         avgPing < 100 ? "Good" :
+                         avgPing < 150 ? "Fair" : "Poor";
+
+            return new HealthCheckResult
+            {
+                Name = "Lag",
+                IsHealthy = isHealthy,
+                Status = status,
+                Message = $"Avg: {avgPing:F0}ms, Jitter: {jitter:F0}ms",
+                ResponseTime = sw.Elapsed,
+                Data = new Dictionary<string, object>
+                {
+                    ["AveragePingMs"] = Math.Round(avgPing, 1),
+                    ["MinPingMs"] = minPing,
+                    ["MaxPingMs"] = maxPing,
+                    ["JitterMs"] = jitter,
+                    ["Samples"] = pingResults.Count,
+                    ["Host"] = host
+                }
+            };
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            return new HealthCheckResult
+            {
+                Name = "Lag",
+                IsHealthy = false,
+                Status = "Error",
+                Message = ex.Message,
+                ResponseTime = sw.Elapsed
+            };
+        }
+    }
+
+    /// <summary>
+    /// Check patch/version status
+    /// </summary>
+    public async Task<HealthCheckResult> CheckPatchStatusAsync(CancellationToken cancellationToken = default)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            var currentVersion = _config.HonData?.ManVersion ?? "0.0.0.0";
+            var patchServer = _config.HonData?.PatchServer ?? "api.kongor.net/patch";
+            var url = $"http://{patchServer}/patcher/patcher.php";
+
+            var formData = new Dictionary<string, string>
+            {
+                ["version"] = currentVersion,
+                ["os"] = OperatingSystem.IsWindows() ? "wac" : "lac",
+                ["arch"] = "x86_64"
+            };
+
+            var content = new FormUrlEncodedContent(formData);
+            var response = await _httpClient.PostAsync(url, content, cancellationToken);
+            var responseText = await response.Content.ReadAsStringAsync(cancellationToken);
+
+            sw.Stop();
+
+            // Parse response for version info
+            var latestMatch = System.Text.RegularExpressions.Regex.Match(
+                responseText, @"latest_version.*?""([^""]+)""");
+            var latestVersion = latestMatch.Success ? latestMatch.Groups[1].Value : currentVersion;
+
+            var updateAvailable = latestVersion != currentVersion;
+
+            return new HealthCheckResult
+            {
+                Name = "PatchStatus",
+                IsHealthy = true,
+                Status = updateAvailable ? "UpdateAvailable" : "UpToDate",
+                Message = updateAvailable 
+                    ? $"Update available: {currentVersion} → {latestVersion}"
+                    : $"Version: {currentVersion}",
+                ResponseTime = sw.Elapsed,
+                Data = new Dictionary<string, object>
+                {
+                    ["CurrentVersion"] = currentVersion,
+                    ["LatestVersion"] = latestVersion,
+                    ["UpdateAvailable"] = updateAvailable
+                }
+            };
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            return new HealthCheckResult
+            {
+                Name = "PatchStatus",
+                IsHealthy = true, // Not critical if patch check fails
+                Status = "Unknown",
+                Message = $"Could not check: {ex.Message}",
+                ResponseTime = sw.Elapsed,
+                Data = new Dictionary<string, object>
+                {
+                    ["CurrentVersion"] = _config.HonData?.ManVersion ?? "Unknown"
+                }
+            };
+        }
+    }
+
+    /// <summary>
+    /// Check port availability
+    /// </summary>
+    public Task<HealthCheckResult> CheckPortAvailabilityAsync(int port, CancellationToken cancellationToken = default)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            var isAvailable = true;
+            string? usedBy = null;
+
+            try
+            {
+                using var listener = new TcpListener(IPAddress.Any, port);
+                listener.Start();
+                listener.Stop();
+            }
+            catch (SocketException)
+            {
+                isAvailable = false;
+                
+                // Try to find what's using the port
+                try
+                {
+                    var properties = IPGlobalProperties.GetIPGlobalProperties();
+                    var tcpConnections = properties.GetActiveTcpListeners();
+                    if (tcpConnections.Any(c => c.Port == port))
+                    {
+                        usedBy = "TCP listener";
+                    }
+                }
+                catch { }
+            }
+
+            sw.Stop();
+
+            return Task.FromResult(new HealthCheckResult
+            {
+                Name = $"Port{port}",
+                IsHealthy = isAvailable,
+                Status = isAvailable ? "Available" : "InUse",
+                Message = isAvailable ? null : $"Port {port} is in use" + (usedBy != null ? $" by {usedBy}" : ""),
+                ResponseTime = sw.Elapsed,
+                Data = new Dictionary<string, object>
+                {
+                    ["Port"] = port,
+                    ["Available"] = isAvailable
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            return Task.FromResult(new HealthCheckResult
+            {
+                Name = $"Port{port}",
+                IsHealthy = false,
+                Status = "Error",
+                Message = ex.Message,
+                ResponseTime = sw.Elapsed
+            });
+        }
+    }
+
+    /// <summary>
+    /// Run enhanced health checks including all Python version checks
+    /// </summary>
+    public async Task<Dictionary<string, HealthCheckResult>> RunEnhancedChecksAsync(CancellationToken cancellationToken = default)
+    {
+        var results = new Dictionary<string, HealthCheckResult>();
+
+        var tasks = new List<Task<HealthCheckResult>>
+        {
+            CheckMasterServerAsync(cancellationToken),
+            CheckChatServerAsync(cancellationToken),
+            CheckNetworkAsync(cancellationToken),
+            CheckDiskSpaceAsync(cancellationToken),
+            CheckHoNInstallationAsync(cancellationToken),
+            CheckLagAsync(cancellationToken),
+            CheckPatchStatusAsync(cancellationToken)
+        };
+
+        // Add port checks for configured game ports
+        var startPort = _config.HonData?.StartingGamePort ?? 11235;
+        var maxInstances = _config.HonData?.TotalServers ?? 5;
+        for (int i = 0; i < Math.Min(maxInstances, 3); i++) // Check first 3 ports
+        {
+            var port = startPort + i;
+            tasks.Add(CheckPortAvailabilityAsync(port, cancellationToken));
+        }
+
+        var completedChecks = await Task.WhenAll(tasks);
+
+        foreach (var result in completedChecks)
+        {
+            results[result.Name] = result;
+            _lastResults[result.Name] = result;
+        }
+
+        return results;
+    }
+
     private static bool IsPrivateIp(IPAddress ip)
     {
         var bytes = ip.GetAddressBytes();
