@@ -18,7 +18,7 @@
 
 ## 💻 System Requirements
 
-- **OS:** Windows 10/11 (64-bit)
+- **OS:** Windows 10/11 (64-bit), Linux (64-bit), macOS
 - **.NET:** .NET 10.0 SDK or higher
 - **HoN:** Heroes of Newerth Game Client installed
 - **RAM:** Minimum 4GB (8GB+ recommended)
@@ -28,24 +28,39 @@
 
 ## 📥 Installation
 
-### 1. Install .NET 10 SDK
+### Windows
 
 ```powershell
-# Download from https://dotnet.microsoft.com/download/dotnet/10.0
-# Or use winget:
+# Install .NET 10 SDK
 winget install Microsoft.DotNet.SDK.10
-```
 
-### 2. Clone or Download the Project
-
-```powershell
+# Clone and build
 git clone <repository-url>
 cd HoNfigurator-dotnet
+dotnet build
 ```
 
-### 3. Build the Project
+### Linux (Ubuntu/Debian)
 
-```powershell
+```bash
+# Install .NET 10 SDK
+wget https://packages.microsoft.com/config/ubuntu/24.04/packages-microsoft-prod.deb
+sudo dpkg -i packages-microsoft-prod.deb
+sudo apt-get update
+sudo apt-get install -y dotnet-sdk-10.0
+
+# Clone and build
+git clone <repository-url>
+cd HoNfigurator-dotnet
+dotnet build
+```
+
+### Linux (Fedora/RHEL)
+
+```bash
+sudo dnf install dotnet-sdk-10.0
+git clone <repository-url>
+cd HoNfigurator-dotnet
 dotnet build
 ```
 
@@ -61,9 +76,11 @@ Config file location: `HoNfigurator.Api/bin/Debug/net10.0/config/config.json`
 {
   "hon_data": {
     // === Installation Paths ===
-    "hon_install_directory": "C:\\Path\\To\\HoN",      // HoN Client location (contains hon_x64.exe)
+    // Windows: "C:\\Path\\To\\HoN"
+    // Linux: "/home/user/HoN" or "/opt/hon"
+    "hon_install_directory": "/path/to/hon",          // HoN Client location
     "hon_home_directory": "",                          // HoN Documents folder (leave empty for default)
-    "hon_logs_directory": "C:\\",                      // Folder for storing logs
+    "hon_logs_directory": "",                          // Folder for storing logs
 
     // === Server Connection ===
     "svr_masterServer": "api.kongor.net",          // Master Server (IP:Port)
@@ -155,18 +172,59 @@ Config file location: `HoNfigurator.Api/bin/Debug/net10.0/config/config.json`
 
 ## 🚀 Running the Application
 
-### Method 1: Run from Source
+### Windows
 
 ```powershell
 cd HoNfigurator-dotnet
 dotnet run --project HoNfigurator.Api
-```
 
-### Method 2: Run from Build Output
-
-```powershell
+# Or from build output:
 cd HoNfigurator.Api/bin/Debug/net10.0
 ./HoNfigurator.Api.exe
+```
+
+### Linux
+
+```bash
+cd HoNfigurator-dotnet
+dotnet run --project HoNfigurator.Api
+
+# Or from build output:
+cd HoNfigurator.Api/bin/Debug/net10.0
+./HoNfigurator.Api
+```
+
+### Run as Linux Service (systemd)
+
+```bash
+# Create service file
+sudo nano /etc/systemd/system/honfigurator.service
+```
+
+```ini
+[Unit]
+Description=HoNfigurator Server Manager
+After=network.target
+
+[Service]
+Type=simple
+User=hon
+WorkingDirectory=/home/hon/HoNfigurator-dotnet/HoNfigurator.Api/bin/Release/net10.0
+ExecStart=/home/hon/HoNfigurator-dotnet/HoNfigurator.Api/bin/Release/net10.0/HoNfigurator.Api
+Restart=always
+RestartSec=10
+Environment=ASPNETCORE_URLS=http://0.0.0.0:5050
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+# Enable and start
+sudo systemctl daemon-reload
+sudo systemctl enable honfigurator
+sudo systemctl start honfigurator
+sudo systemctl status honfigurator
 ```
 
 ### Successful startup screen:
@@ -256,11 +314,13 @@ curl -X POST http://localhost:5050/api/servers/stop-all
 
 ---
 
-### ❌ Error: "hon_x64.exe not found"
+### ❌ Error: "hon_x64.exe not found" (Windows) / "hon executable not found" (Linux)
 
 **Cause:** HoN installation path is incorrect
 
-**Solution:** Verify that `hon_install_directory` points to the folder containing `hon_x64.exe`
+**Solution:** 
+- Windows: Verify `hon_install_directory` points to folder containing `hon_x64.exe`
+- Linux: Verify path points to folder containing `hon_x64-server` or `hon_x64`
 
 ---
 

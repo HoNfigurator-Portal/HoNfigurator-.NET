@@ -216,7 +216,7 @@ public class GameServerManager : IGameServerManager
             startInfo.ArgumentList.Add(arg);
         }
 
-        // Set environment variables like Python does
+        // Set environment variables based on OS
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
             var honHomeDir = Configuration?.HonData?.HonHomeDirectory ?? "";
@@ -229,6 +229,26 @@ public class GameServerManager : IGameServerManager
             if (!string.IsNullOrEmpty(artefactsDir))
             {
                 startInfo.Environment["APPDATA"] = artefactsDir;
+            }
+        }
+        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux) || RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        {
+            // Linux/macOS environment setup
+            var honHomeDir = Configuration?.HonData?.HonHomeDirectory ?? "";
+            if (!string.IsNullOrEmpty(honHomeDir))
+            {
+                startInfo.Environment["HOME"] = honHomeDir;
+            }
+            
+            // Set LD_LIBRARY_PATH for Linux
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            {
+                var installDir = Configuration?.HonData?.HonInstallDirectory ?? "";
+                var libPath = Path.Combine(installDir, "libs-x86_64");
+                var existingLibPath = Environment.GetEnvironmentVariable("LD_LIBRARY_PATH") ?? "";
+                startInfo.Environment["LD_LIBRARY_PATH"] = string.IsNullOrEmpty(existingLibPath) 
+                    ? libPath 
+                    : $"{libPath}:{existingLibPath}";
             }
         }
 

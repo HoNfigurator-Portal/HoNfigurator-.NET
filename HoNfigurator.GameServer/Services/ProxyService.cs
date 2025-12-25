@@ -1,12 +1,13 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using Microsoft.Extensions.Logging;
 using HoNfigurator.Core.Models;
 
 namespace HoNfigurator.GameServer.Services;
 
 /// <summary>
-/// Service for managing HoN Proxy processes (proxy.exe).
-/// Each game server that has proxy enabled needs its own proxy.exe process running.
+/// Service for managing HoN Proxy processes.
+/// Each game server that has proxy enabled needs its own proxy process running.
 /// The proxy redirects traffic from public ports to internal game server ports.
 /// </summary>
 public interface IProxyService
@@ -53,13 +54,13 @@ public class ProxyService : IProxyService
             return;
         }
         
-        // Check for proxy.exe
+        // Check for proxy executable
         var honDir = _config.HonData.HonInstallDirectory;
-        var proxyExePath = Path.Combine(honDir, "proxy.exe");
+        var proxyExePath = FindProxyExecutable(honDir);
         
-        if (!File.Exists(proxyExePath))
+        if (string.IsNullOrEmpty(proxyExePath) || !File.Exists(proxyExePath))
         {
-            _logger.LogWarning("proxy.exe not found at {Path}. Download from https://github.com/wasserver/wasserver", proxyExePath);
+            _logger.LogWarning("proxy executable not found in {Path}. Download from https://github.com/wasserver/wasserver", honDir);
             return;
         }
         
@@ -261,5 +262,29 @@ region=naeu
             }
             return false;
         }
+    }
+    
+    /// <summary>
+    /// Find proxy executable for current platform
+    /// </summary>
+    private string FindProxyExecutable(string honDir)
+    {
+        if (string.IsNullOrEmpty(honDir))
+            return "";
+
+        string[] executableNames = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+            ? new[] { "proxy.exe", "honproxy.exe" }
+            : new[] { "proxy", "honproxy", "proxy.sh" };
+
+        foreach (var exeName in executableNames)
+        {
+            var fullPath = Path.Combine(honDir, exeName);
+            if (File.Exists(fullPath))
+            {
+                return fullPath;
+            }
+        }
+
+        return "";
     }
 }
