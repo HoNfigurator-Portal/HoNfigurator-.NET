@@ -239,6 +239,11 @@ var managerPort = configService.Configuration.HonData.ManagerPort;
 if (managerPort > 0)
 {
     var listener = app.Services.GetRequiredService<IGameServerListener>();
+    var serverManager = app.Services.GetRequiredService<IGameServerManager>();
+    
+    // Connect listener to server manager for graceful shutdown support
+    serverManager.SetListener(listener);
+    
     await listener.StartAsync(managerPort);
     Console.WriteLine($"    GameServer Listener on port {managerPort}");
 }

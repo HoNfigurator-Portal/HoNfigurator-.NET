@@ -2,6 +2,24 @@ using System.Text.Json.Serialization;
 
 namespace HoNfigurator.Core.Models;
 
+/// <summary>
+/// Manager to Game Server command definitions
+/// These commands are sent from the manager to control the game server
+/// </summary>
+public static class GameServerCommands
+{
+    // Length prefix for single-byte commands (1 byte)
+    public static readonly byte[] CommandLengthBytes = new byte[] { 0x01, 0x00 };
+    
+    // Command bytes - match Python HoNfigurator-Central
+    public static readonly byte[] ShutdownBytes = new byte[] { 0x22 };      // '"' - Graceful shutdown
+    public static readonly byte[] RestartBytes = new byte[] { 0x23 };       // '#' - Restart
+    public static readonly byte[] SleepBytes = new byte[] { 0x20 };         // ' ' - Sleep (low CPU mode)
+    public static readonly byte[] WakeBytes = new byte[] { 0x21 };          // '!' - Wake from sleep
+    public static readonly byte[] MessagePrefixByte = new byte[] { 0x24 };  // '$' - Message prefix
+    public static readonly byte[] CommandPrefixByte = new byte[] { 0x25 };  // '%' - Console command prefix
+}
+
 public class PlayerInfo
 {
     [JsonPropertyName("account_id")]

@@ -15,6 +15,22 @@ public interface IGameServerListener
     Task StartAsync(int port);
     Task StopAsync();
     bool IsListening { get; }
+    
+    /// <summary>
+    /// Send a graceful shutdown command to the game server.
+    /// This will kick all players and close the server properly.
+    /// </summary>
+    Task<bool> SendShutdownCommandAsync(int serverId);
+    
+    /// <summary>
+    /// Send a message to all players in the game server.
+    /// </summary>
+    Task<bool> SendMessageAsync(int serverId, string message);
+    
+    /// <summary>
+    /// Send a console command to the game server.
+    /// </summary>
+    Task<bool> SendCommandAsync(int serverId, string command);
 }
 
 public class GameServerListener : IGameServerListener
@@ -85,6 +101,113 @@ public class GameServerListener : IGameServerListener
         _logger.LogInformation("GameServerListener stopped");
         
         await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Send a graceful shutdown command to the game server.
+    /// This kicks all players and closes the server properly.
+    /// </summary>
+    public async Task<bool> SendShutdownCommandAsync(int serverId)
+    {
+        if (!_clientConnections.TryGetValue(serverId, out var client) || client == null)
+        {
+            _logger.LogWarning("Cannot send shutdown command: Server #{Id} not connected", serverId);
+            return false;
+        }
+
+        try
+        {
+            var stream = client.GetStream();
+            
+            // Send length prefix (1 byte) followed by shutdown command (0x22)
+            await stream.WriteAsync(GameServerCommands.CommandLengthBytes);
+            await stream.WriteAsync(GameServerCommands.ShutdownBytes);
+            await stream.FlushAsync();
+            
+            _logger.LogInformation("Shutdown command sent to Server #{Id}", serverId);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send shutdown command to Server #{Id}", serverId);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Send a message to all players in the game server.
+    /// </summary>
+    public async Task<bool> SendMessageAsync(int serverId, string message)
+    {
+        if (!_clientConnections.TryGetValue(serverId, out var client) || client == null)
+        {
+            _logger.LogWarning("Cannot send message: Server #{Id} not connected", serverId);
+            return false;
+        }
+
+        try
+        {
+            var stream = client.GetStream();
+            
+            // Build message packet: prefix byte (0x24) + message + null terminator
+            var messageBytes = System.Text.Encoding.ASCII.GetBytes(message);
+            var packet = new byte[1 + messageBytes.Length + 1];
+            packet[0] = GameServerCommands.MessagePrefixByte[0];
+            Array.Copy(messageBytes, 0, packet, 1, messageBytes.Length);
+            packet[packet.Length - 1] = 0x00; // null terminator
+            
+            // Write length (2 bytes, little endian) followed by packet
+            var lengthBytes = BitConverter.GetBytes((ushort)packet.Length);
+            await stream.WriteAsync(lengthBytes);
+            await stream.WriteAsync(packet);
+            await stream.FlushAsync();
+            
+            _logger.LogInformation("Message sent to Server #{Id}: {Message}", serverId, message);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send message to Server #{Id}", serverId);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Send a console command to the game server (e.g., terminateplayer, serverreset).
+    /// </summary>
+    public async Task<bool> SendCommandAsync(int serverId, string command)
+    {
+        if (!_clientConnections.TryGetValue(serverId, out var client) || client == null)
+        {
+            _logger.LogWarning("Cannot send command: Server #{Id} not connected", serverId);
+            return false;
+        }
+
+        try
+        {
+            var stream = client.GetStream();
+            
+            // Build command packet: prefix byte (0x25) + command + null terminator
+            var commandBytes = System.Text.Encoding.ASCII.GetBytes(command);
+            var packet = new byte[1 + commandBytes.Length + 1];
+            packet[0] = GameServerCommands.CommandPrefixByte[0];
+            Array.Copy(commandBytes, 0, packet, 1, commandBytes.Length);
+            packet[packet.Length - 1] = 0x00; // null terminator
+            
+            // Write length (2 bytes, little endian) followed by packet
+            var lengthBytes = BitConverter.GetBytes((ushort)packet.Length);
+            await stream.WriteAsync(lengthBytes);
+            await stream.WriteAsync(packet);
+            await stream.FlushAsync();
+            
+            _logger.LogInformation("Command sent to Server #{Id}: {Command}", serverId, command);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send command to Server #{Id}", serverId);
+            return false;
+        }
     }
 
     private async Task AcceptClientsAsync(CancellationToken ct)

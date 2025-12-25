@@ -16,7 +16,7 @@ public interface IGameServerManager
     string? MasterServerStatus { get; set; }
     string? ChatServerStatus { get; set; }
     Task<GameServerInstance?> StartServerAsync(int id);
-    Task<bool> StopServerAsync(int id);
+    Task<bool> StopServerAsync(int id, bool graceful = true);
     Task<bool> RestartServerAsync(int id);
     Task StartAllServersAsync();
     Task StopAllServersAsync();
@@ -28,6 +28,11 @@ public interface IGameServerManager
     bool RemoveServer(int id);
     void ClearServers();
     void UpdateProcessStats();
+    
+    /// <summary>
+    /// Set the listener reference for sending commands to game servers
+    /// </summary>
+    void SetListener(IGameServerListener listener);
 }
 
 public class GameServerManager : IGameServerManager
@@ -41,6 +46,7 @@ public class GameServerManager : IGameServerManager
     private readonly SemaphoreSlim _startupSemaphore;
     private int _maxStartAtOnce = 2;
     private string? _publicIp;
+    private IGameServerListener? _listener;
     
     // Connection status
     public bool MasterServerConnected { get; set; }
@@ -60,6 +66,14 @@ public class GameServerManager : IGameServerManager
         
         // Lookup public IP at startup
         _ = LookupPublicIpAsync();
+    }
+
+    /// <summary>
+    /// Set the listener reference for sending commands to game servers
+    /// </summary>
+    public void SetListener(IGameServerListener listener)
+    {
+        _listener = listener;
     }
 
     private async Task LookupPublicIpAsync()
@@ -420,7 +434,7 @@ public class GameServerManager : IGameServerManager
         }
     }
 
-    public async Task<bool> StopServerAsync(int id)
+    public async Task<bool> StopServerAsync(int id, bool graceful = true)
     {
         if (!_instances.TryGetValue(id, out var instance))
         {
@@ -432,20 +446,66 @@ public class GameServerManager : IGameServerManager
             return true;
         }
 
-        _logger.LogInformation("Stopping server {Id}", id);
+        _logger.LogInformation("Stopping server {Id} (graceful: {Graceful})", id, graceful);
 
         try
         {
+            // If graceful shutdown is requested and we have a listener, send shutdown command first
+            if (graceful && _listener != null)
+            {
+                _logger.LogInformation("Sending graceful shutdown command to server {Id}...", id);
+                var shutdownSent = await _listener.SendShutdownCommandAsync(id);
+                
+                if (shutdownSent)
+                {
+                    // Wait for server to shutdown gracefully (up to 15 seconds)
+                    // The server should kick all players and close itself
+                    var gracefulTimeout = 15000;
+                    var waited = 0;
+                    var checkInterval = 500;
+                    
+                    while (waited < gracefulTimeout)
+                    {
+                        await Task.Delay(checkInterval);
+                        waited += checkInterval;
+                        
+                        // Check if process has exited
+                        if (_processes.TryGetValue(id, out var proc) && proc != null)
+                        {
+                            try
+                            {
+                                proc.Refresh();
+                                if (proc.HasExited)
+                                {
+                                    _logger.LogInformation("Server {Id} shutdown gracefully", id);
+                                    break;
+                                }
+                            }
+                            catch
+                            {
+                                // Process likely already exited
+                                break;
+                            }
+                        }
+                        else
+                        {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Force kill if still running
             if (_processes.TryGetValue(id, out var process) && process != null && !process.HasExited)
             {
-                // Try graceful shutdown first
+                _logger.LogWarning("Server {Id} did not exit gracefully, force killing", id);
                 process.Kill(entireProcessTree: true);
                 
                 // Wait for exit with timeout
                 var exitTask = process.WaitForExitAsync();
                 if (await Task.WhenAny(exitTask, Task.Delay(10000)) != exitTask)
                 {
-                    _logger.LogWarning("Server {Id} did not exit gracefully, force killing", id);
+                    _logger.LogWarning("Server {Id} force kill timed out", id);
                 }
             }
 
@@ -470,7 +530,7 @@ public class GameServerManager : IGameServerManager
     public async Task<bool> RestartServerAsync(int id)
     {
         _logger.LogInformation("Restarting server {Id}", id);
-        await StopServerAsync(id);
+        await StopServerAsync(id, graceful: true);
         await Task.Delay(2000);
         var result = await StartServerAsync(id);
         return result != null;
@@ -495,7 +555,7 @@ public class GameServerManager : IGameServerManager
     public async Task StopAllServersAsync()
     {
         _logger.LogInformation("Stopping all servers");
-        var tasks = _instances.Keys.Select(StopServerAsync);
+        var tasks = _instances.Keys.Select(id => StopServerAsync(id, graceful: true));
         await Task.WhenAll(tasks);
     }
 
