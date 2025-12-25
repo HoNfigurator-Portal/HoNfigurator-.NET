@@ -123,6 +123,21 @@ builder.Services.AddSingleton<IDiscordBotService>(sp =>
     return new DiscordBotService(logger, config, mqttHandler);
 });
 
+// Register match statistics service (must be before GameServerListener)
+builder.Services.AddSingleton<IMatchStatisticsService>(sp =>
+{
+    var logger = sp.GetRequiredService<ILogger<MatchStatisticsService>>();
+    return new MatchStatisticsService(logger);
+});
+
+// Register replay upload service (must be before GameServerListener)
+builder.Services.AddSingleton<IReplayUploadService>(sp =>
+{
+    var logger = sp.GetRequiredService<ILogger<ReplayUploadService>>();
+    var config = sp.GetRequiredService<HoNConfiguration>();
+    return new ReplayUploadService(logger, config);
+});
+
 // Register GameServerListener for receiving status updates from game servers
 builder.Services.AddSingleton<IGameServerListener>(sp =>
 {
@@ -131,7 +146,11 @@ builder.Services.AddSingleton<IGameServerListener>(sp =>
     var logReader = sp.GetRequiredService<IGameLogReader>();
     var config = sp.GetRequiredService<HoNConfiguration>();
     var mqttHandler = sp.GetRequiredService<IMqttHandler>();
-    return new GameServerListener(logger, serverManager, logReader, config, mqttHandler);
+    var discordBot = sp.GetRequiredService<IDiscordBotService>();
+    var statisticsService = sp.GetRequiredService<IMatchStatisticsService>();
+    var replayUploadService = sp.GetRequiredService<IReplayUploadService>();
+    return new GameServerListener(logger, serverManager, logReader, config, mqttHandler, 
+        discordBot, statisticsService, replayUploadService);
 });
 
 // Register core services
@@ -144,21 +163,6 @@ builder.Services.AddSingleton<ReplayManager>();
 builder.Services.AddSingleton<BanManager>();
 builder.Services.AddSingleton<AuthService>(sp => new AuthService(sp.GetRequiredService<HoNConfiguration>()));
 builder.Services.AddSingleton<AdvancedMetricsService>();
-
-// Register match statistics service
-builder.Services.AddSingleton<IMatchStatisticsService>(sp =>
-{
-    var logger = sp.GetRequiredService<ILogger<MatchStatisticsService>>();
-    return new MatchStatisticsService(logger);
-});
-
-// Register replay upload service
-builder.Services.AddSingleton<IReplayUploadService>(sp =>
-{
-    var logger = sp.GetRequiredService<ILogger<ReplayUploadService>>();
-    var config = sp.GetRequiredService<HoNConfiguration>();
-    return new ReplayUploadService(logger, config);
-});
 
 // Register notification and chart services
 builder.Services.AddSingleton<INotificationService, NotificationService>();
@@ -225,6 +229,11 @@ builder.Services.AddOpenApi("v1", options =>
 });
 
 var app = builder.Build();
+
+// Initialize statistics database
+var statisticsService = app.Services.GetRequiredService<IMatchStatisticsService>();
+await statisticsService.InitializeAsync();
+Console.WriteLine("    Statistics database initialized");
 
 // Configure the HTTP request pipeline
 // Enable OpenAPI + Scalar UI

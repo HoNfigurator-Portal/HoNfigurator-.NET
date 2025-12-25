@@ -4,6 +4,9 @@ using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 using HoNfigurator.Core.Models;
 using HoNfigurator.Core.Connectors;
+using HoNfigurator.Core.Discord;
+using HoNfigurator.Core.Statistics;
+using HoNfigurator.Core.Services;
 
 namespace HoNfigurator.GameServer.Services;
 
@@ -41,11 +44,16 @@ public class GameServerListener : IGameServerListener
     private readonly IGameLogReader _logReader;
     private readonly HoNConfiguration _config;
     private readonly IMqttHandler? _mqttHandler;
+    private readonly IDiscordBotService? _discordBot;
+    private readonly IMatchStatisticsService? _statisticsService;
+    private readonly IReplayUploadService? _replayUploadService;
     private TcpListener? _listener;
     private CancellationTokenSource? _cts;
     private readonly ConcurrentDictionary<int, TcpClient> _clientConnections = new();
     private readonly ConcurrentDictionary<int, bool> _botMatchCheckDone = new();
     private readonly ConcurrentDictionary<int, HashSet<string>> _previousPlayers = new(); // Track players for join/leave events
+    private readonly ConcurrentDictionary<int, long> _activeMatchIds = new(); // Track active match IDs for statistics
+    private readonly ConcurrentDictionary<int, DateTime> _matchStartTimes = new(); // Track match start times
     
     public bool IsListening { get; private set; }
 
@@ -54,13 +62,19 @@ public class GameServerListener : IGameServerListener
         IGameServerManager serverManager, 
         IGameLogReader logReader,
         HoNConfiguration config,
-        IMqttHandler? mqttHandler = null)
+        IMqttHandler? mqttHandler = null,
+        IDiscordBotService? discordBot = null,
+        IMatchStatisticsService? statisticsService = null,
+        IReplayUploadService? replayUploadService = null)
     {
         _logger = logger;
         _serverManager = serverManager;
         _logReader = logReader;
         _config = config;
         _mqttHandler = mqttHandler;
+        _discordBot = discordBot;
+        _statisticsService = statisticsService;
+        _replayUploadService = replayUploadService;
     }
 
     public async Task StartAsync(int port)
@@ -538,13 +552,48 @@ public class GameServerListener : IGameServerListener
                 await CheckBotMatchAsync(instance);
                 _botMatchCheckDone[serverId] = true;
                 
+                var playerNames = instance.Players.Select(p => p.Name).ToList();
+                
+                // Record match start in statistics
+                if (_statisticsService != null)
+                {
+                    try
+                    {
+                        var matchId = await _statisticsService.RecordMatchStartAsync(
+                            serverId, 
+                            instance.Name, 
+                            playerNames,
+                            instance.GamePhase);
+                        _activeMatchIds[serverId] = matchId;
+                        _matchStartTimes[serverId] = DateTime.UtcNow;
+                        _logger.LogInformation("Match #{MatchId} started on Server #{ServerId}", matchId, serverId);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Failed to record match start for Server #{ServerId}", serverId);
+                    }
+                }
+                
+                // Send Discord notification for match started
+                if (_discordBot != null && _discordBot.IsConnected)
+                {
+                    try
+                    {
+                        await _discordBot.SendMatchStartedAsync(serverId, instance.Name, playerNames);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Failed to send Discord match started notification");
+                    }
+                }
+                
                 // Publish match started event
                 if (_mqttHandler != null)
                 {
                     await _mqttHandler.PublishMatchEventAsync(serverId, MqttEventTypes.MatchStarted, new
                     {
                         PlayerCount = numClients,
-                        Players = instance.Players.Select(p => p.Name).ToList(),
+                        Players = playerNames,
                         Phase = instance.GamePhase
                     });
                 }
@@ -555,12 +604,81 @@ public class GameServerListener : IGameServerListener
             // Check if we had players before (match ended)
             if (_previousPlayers.TryGetValue(serverId, out var prevPlayers) && prevPlayers.Count > 0)
             {
+                // Calculate match duration
+                var duration = 0;
+                if (_matchStartTimes.TryRemove(serverId, out var startTime))
+                {
+                    duration = (int)(DateTime.UtcNow - startTime).TotalSeconds;
+                }
+                
+                // Record match end in statistics
+                if (_statisticsService != null && _activeMatchIds.TryRemove(serverId, out var matchId))
+                {
+                    try
+                    {
+                        await _statisticsService.RecordMatchEndAsync(matchId);
+                        _logger.LogInformation("Match #{MatchId} ended on Server #{ServerId}, duration: {Duration}s", 
+                            matchId, serverId, duration);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Failed to record match end for Match #{MatchId}", matchId);
+                    }
+                }
+                
+                // Send Discord notification for match ended
+                if (_discordBot != null && _discordBot.IsConnected)
+                {
+                    try
+                    {
+                        await _discordBot.SendMatchEndedAsync(serverId, instance.Name, duration);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Failed to send Discord match ended notification");
+                    }
+                }
+                
+                // Auto-upload replay if enabled
+                if (_replayUploadService != null && _replayUploadService.Settings.Enabled && 
+                    _replayUploadService.Settings.AutoUploadOnMatchEnd)
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            // Find replay file for this server
+                            var replayPath = FindLatestReplay(serverId);
+                            if (!string.IsNullOrEmpty(replayPath) && File.Exists(replayPath))
+                            {
+                                var result = await _replayUploadService.UploadReplayAsync(
+                                    replayPath, 
+                                    $"server{serverId}_{DateTime.UtcNow:yyyyMMddHHmmss}");
+                                    
+                                if (result.Success)
+                                {
+                                    _logger.LogInformation("Replay auto-uploaded: {Url}", result.Url);
+                                }
+                                else
+                                {
+                                    _logger.LogWarning("Replay auto-upload failed: {Error}", result.Error);
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Failed to auto-upload replay for Server #{ServerId}", serverId);
+                        }
+                    });
+                }
+                
                 // Publish match ended event
                 if (_mqttHandler != null)
                 {
                     await _mqttHandler.PublishMatchEventAsync(serverId, MqttEventTypes.MatchEnded, new
                     {
-                        PreviousPlayerCount = prevPlayers.Count
+                        PreviousPlayerCount = prevPlayers.Count,
+                        DurationSeconds = duration
                     });
                 }
             }
@@ -743,30 +861,111 @@ public class GameServerListener : IGameServerListener
         // Find players who left (in previous but not in current)
         var leftPlayers = previousPlayerNames.Except(currentPlayerNames).ToList();
 
-        // Publish MQTT events for joined players
-        if (_mqttHandler != null)
+        var instance = _serverManager.Instances.FirstOrDefault(s => s.Id == serverId);
+        var serverName = instance?.Name ?? $"Server #{serverId}";
+
+        // Publish MQTT events and Discord notifications for joined players
+        foreach (var playerName in joinedPlayers)
         {
-            foreach (var playerName in joinedPlayers)
+            var player = currentPlayers.FirstOrDefault(p => p.Name == playerName);
+            
+            if (_mqttHandler != null)
             {
-                var player = currentPlayers.FirstOrDefault(p => p.Name == playerName);
                 await _mqttHandler.PublishPlayerEventAsync(serverId, MqttEventTypes.PlayerJoined, playerName, new
                 {
                     AccountId = player?.AccountId ?? 0,
                     Location = player?.Location ?? "",
                     Ping = player?.AvgPing ?? 0
                 });
-                _logger.LogInformation("Player joined Server #{ServerId}: {Player}", serverId, playerName);
             }
+            
+            // Send Discord notification
+            if (_discordBot != null && _discordBot.IsConnected && 
+                _config.ApplicationData?.Discord?.NotifyPlayerJoinLeave == true)
+            {
+                try
+                {
+                    await _discordBot.SendPlayerJoinedAsync(serverId, serverName, playerName);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Failed to send Discord player joined notification");
+                }
+            }
+            
+            _logger.LogInformation("Player joined Server #{ServerId}: {Player}", serverId, playerName);
+        }
 
-            // Publish MQTT events for players who left
-            foreach (var playerName in leftPlayers)
+        // Publish MQTT events and Discord notifications for players who left
+        foreach (var playerName in leftPlayers)
+        {
+            if (_mqttHandler != null)
             {
                 await _mqttHandler.PublishPlayerEventAsync(serverId, MqttEventTypes.PlayerLeft, playerName, null);
-                _logger.LogInformation("Player left Server #{ServerId}: {Player}", serverId, playerName);
             }
+            
+            // Send Discord notification
+            if (_discordBot != null && _discordBot.IsConnected && 
+                _config.ApplicationData?.Discord?.NotifyPlayerJoinLeave == true)
+            {
+                try
+                {
+                    await _discordBot.SendPlayerLeftAsync(serverId, serverName, playerName);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Failed to send Discord player left notification");
+                }
+            }
+            
+            _logger.LogInformation("Player left Server #{ServerId}: {Player}", serverId, playerName);
         }
 
         // Update the tracking dictionary
         _previousPlayers[serverId] = currentPlayerNames;
+    }
+
+    /// <summary>
+    /// Find the latest replay file for a server
+    /// </summary>
+    private string? FindLatestReplay(int serverId)
+    {
+        try
+        {
+            // Look for replay files in the server's replay directory
+            var replayDir = Path.Combine(_config.HonData.HonInstallDirectory ?? "", "game", "replays");
+            if (!Directory.Exists(replayDir))
+            {
+                // Try alternative path
+                replayDir = Path.Combine(AppContext.BaseDirectory, "replays");
+            }
+            
+            if (!Directory.Exists(replayDir))
+            {
+                _logger.LogDebug("Replay directory not found: {Path}", replayDir);
+                return null;
+            }
+            
+            // Find the most recent .honreplay file
+            var replayFiles = Directory.GetFiles(replayDir, "*.honreplay")
+                .Union(Directory.GetFiles(replayDir, "*.honReplay"))
+                .OrderByDescending(File.GetLastWriteTimeUtc)
+                .ToList();
+                
+            if (replayFiles.Count > 0)
+            {
+                var latestReplay = replayFiles[0];
+                _logger.LogDebug("Found latest replay: {Path}", latestReplay);
+                return latestReplay;
+            }
+            
+            _logger.LogDebug("No replay files found in {Path}", replayDir);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error finding replay for Server #{ServerId}", serverId);
+            return null;
+        }
     }
 }
