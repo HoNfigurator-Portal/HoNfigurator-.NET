@@ -627,6 +627,7 @@ public static class ApiEndpoints
         result["man_enableProxy"] = new { value = config.HonData.EnableProxy, editable = true };
         result["man_use_cowmaster"] = new { value = config.HonData.UseCowmaster, editable = true };
         result["svr_masterServer"] = new { value = config.HonData.MasterServer, editable = true };
+        result["svr_chatServer"] = new { value = config.HonData.ChatServer, editable = true };
         result["svr_patchServer"] = new { value = config.HonData.PatchServer, editable = true };
         result["svr_starting_gamePort"] = new { value = config.HonData.StartingGamePort, editable = true };
         result["svr_starting_voicePort"] = new { value = config.HonData.StartingVoicePort, editable = false };
@@ -715,6 +716,9 @@ public static class ApiEndpoints
                         break;
                     case "svr_masterServer":
                         config.HonData.MasterServer = value.GetString() ?? config.HonData.MasterServer;
+                        break;
+                    case "svr_chatServer":
+                        config.HonData.ChatServer = value.GetString() ?? config.HonData.ChatServer;
                         break;
                     case "svr_patchServer":
                         config.HonData.PatchServer = value.GetString() ?? config.HonData.PatchServer;
