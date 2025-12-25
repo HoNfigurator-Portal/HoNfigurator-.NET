@@ -12,7 +12,7 @@ namespace HoNfigurator.Core.Services;
 public class ConfigHotReloadService : BackgroundService
 {
     private readonly ILogger<ConfigHotReloadService> _logger;
-    private readonly ConfigurationService _configService;
+    private readonly IConfigurationService _configService;
     private readonly ConcurrentDictionary<string, FileSystemWatcher> _watchers = new();
     private readonly ConcurrentDictionary<string, DateTime> _lastReloadTimes = new();
     private readonly TimeSpan _debounceInterval = TimeSpan.FromMilliseconds(500);
@@ -24,7 +24,7 @@ public class ConfigHotReloadService : BackgroundService
 
     public ConfigHotReloadService(
         ILogger<ConfigHotReloadService> logger,
-        ConfigurationService configService)
+        IConfigurationService configService)
     {
         _logger = logger;
         _configService = configService;
