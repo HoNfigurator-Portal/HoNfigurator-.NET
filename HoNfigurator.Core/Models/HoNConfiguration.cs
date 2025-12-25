@@ -162,6 +162,33 @@ public class ApplicationData
 
     [JsonPropertyName("discord")]
     public DiscordSettings? Discord { get; set; }
+
+    [JsonPropertyName("mqtt")]
+    public MqttSettings? Mqtt { get; set; }
+}
+
+public class MqttSettings
+{
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; } = false;
+
+    [JsonPropertyName("host")]
+    public string Host { get; set; } = "localhost";
+
+    [JsonPropertyName("port")]
+    public int Port { get; set; } = 1883;
+
+    [JsonPropertyName("username")]
+    public string? Username { get; set; }
+
+    [JsonPropertyName("password")]
+    public string? Password { get; set; }
+
+    [JsonPropertyName("topic_prefix")]
+    public string TopicPrefix { get; set; } = "honfigurator";
+
+    [JsonPropertyName("use_tls")]
+    public bool UseTls { get; set; } = false;
 }
 
 public class DiscordSettings

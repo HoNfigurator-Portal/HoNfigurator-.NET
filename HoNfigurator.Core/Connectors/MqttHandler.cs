@@ -1,61 +1,139 @@
-﻿using System.Text.Json;
+﻿using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using MQTTnet;
+using MQTTnet.Client;
+using MQTTnet.Protocol;
+using HoNfigurator.Core.Models;
 
 namespace HoNfigurator.Core.Connectors;
 
 /// <summary>
 /// MQTT Handler for publishing server status and events
-/// Note: Requires MQTTnet package for full implementation
 /// </summary>
 public interface IMqttHandler : IDisposable
 {
     bool IsConnected { get; }
-    Task<bool> ConnectAsync(string host, int port, string clientId, CancellationToken cancellationToken = default);
+    bool IsEnabled { get; }
+    Task<bool> ConnectAsync(CancellationToken cancellationToken = default);
     Task DisconnectAsync();
-    Task PublishAsync(string topic, string message);
-    Task PublishJsonAsync<T>(string topic, T data);
+    Task PublishAsync(string topic, string message, bool retain = false);
+    Task PublishJsonAsync<T>(string topic, T data, bool retain = false);
+    
+    // Convenience methods for common events
+    Task PublishServerStatusAsync(int serverId, string status, object? data = null);
+    Task PublishMatchEventAsync(int serverId, string eventType, object? data = null);
+    Task PublishPlayerEventAsync(int serverId, string eventType, string playerName, object? data = null);
+    Task PublishManagerEventAsync(string eventType, object? data = null);
 }
 
 /// <summary>
-/// Simple MQTT handler implementation
-/// For production use, consider using MQTTnet library
+/// MQTT handler implementation using MQTTnet
 /// </summary>
 public class MqttHandler : IMqttHandler
 {
     private readonly ILogger<MqttHandler> _logger;
+    private readonly HoNConfiguration _config;
+    private readonly IMqttClient _mqttClient;
+    private readonly MqttClientOptions? _options;
     private bool _disposed;
-    private string _host = "";
-    private int _port;
-    private string _clientId = "";
 
-    public bool IsConnected { get; private set; }
+    public bool IsConnected => _mqttClient?.IsConnected ?? false;
+    public bool IsEnabled => _config.ApplicationData?.Mqtt?.Enabled ?? false;
 
     public event Action? OnConnected;
     public event Action? OnDisconnected;
     public event Action<string, string>? OnMessagePublished;
 
-    public MqttHandler(ILogger<MqttHandler> logger)
+    public MqttHandler(ILogger<MqttHandler> logger, HoNConfiguration config)
     {
         _logger = logger;
-    }
-
-    public async Task<bool> ConnectAsync(string host, int port, string clientId, CancellationToken cancellationToken = default)
-    {
-        try
+        _config = config;
+        
+        var factory = new MqttFactory();
+        _mqttClient = factory.CreateMqttClient();
+        
+        // Setup event handlers
+        _mqttClient.ConnectedAsync += e =>
         {
-            _host = host;
-            _port = port;
-            _clientId = clientId;
-            
-            _logger.LogInformation("Connecting to MQTT broker at {Host}:{Port} as {ClientId}", host, port, clientId);
-            
-            // In a real implementation, this would connect to an MQTT broker
-            // using a library like MQTTnet
-            await Task.Delay(100, cancellationToken);
-            
-            IsConnected = true;
             _logger.LogInformation("Connected to MQTT broker");
             OnConnected?.Invoke();
+            return Task.CompletedTask;
+        };
+        
+        _mqttClient.DisconnectedAsync += e =>
+        {
+            if (e.Exception != null)
+            {
+                _logger.LogWarning(e.Exception, "Disconnected from MQTT broker");
+            }
+            else
+            {
+                _logger.LogInformation("Disconnected from MQTT broker");
+            }
+            OnDisconnected?.Invoke();
+            return Task.CompletedTask;
+        };
+        
+        // Build options if MQTT is configured
+        var mqttSettings = _config.ApplicationData?.Mqtt;
+        if (mqttSettings != null && mqttSettings.Enabled)
+        {
+            var clientId = $"honfigurator-{_config.HonData.ServerName}-{Environment.MachineName}";
+            
+            var optionsBuilder = new MqttClientOptionsBuilder()
+                .WithClientId(clientId)
+                .WithTcpServer(mqttSettings.Host, mqttSettings.Port)
+                .WithCleanSession(true)
+                .WithKeepAlivePeriod(TimeSpan.FromSeconds(60));
+            
+            if (!string.IsNullOrEmpty(mqttSettings.Username))
+            {
+                optionsBuilder.WithCredentials(mqttSettings.Username, mqttSettings.Password ?? "");
+            }
+            
+            if (mqttSettings.UseTls)
+            {
+                optionsBuilder.WithTlsOptions(o => o.WithCertificateValidationHandler(_ => true));
+            }
+            
+            _options = optionsBuilder.Build();
+        }
+    }
+
+    public async Task<bool> ConnectAsync(CancellationToken cancellationToken = default)
+    {
+        if (!IsEnabled)
+        {
+            _logger.LogDebug("MQTT is disabled in configuration");
+            return false;
+        }
+
+        if (_options == null)
+        {
+            _logger.LogWarning("MQTT options not configured");
+            return false;
+        }
+
+        if (IsConnected)
+        {
+            _logger.LogDebug("Already connected to MQTT broker");
+            return true;
+        }
+
+        try
+        {
+            var mqttSettings = _config.ApplicationData?.Mqtt;
+            _logger.LogInformation("Connecting to MQTT broker at {Host}:{Port}...", 
+                mqttSettings?.Host, mqttSettings?.Port);
+            
+            await _mqttClient.ConnectAsync(_options, cancellationToken);
+            
+            // Publish online status
+            await PublishManagerEventAsync("online", new { 
+                server_name = _config.HonData.ServerName,
+                timestamp = DateTime.UtcNow
+            });
             
             return true;
         }
@@ -72,10 +150,13 @@ public class MqttHandler : IMqttHandler
         
         try
         {
-            _logger.LogInformation("Disconnecting from MQTT broker");
-            await Task.Delay(50);
-            IsConnected = false;
-            OnDisconnected?.Invoke();
+            // Publish offline status before disconnecting
+            await PublishManagerEventAsync("offline", new { 
+                server_name = _config.HonData.ServerName,
+                timestamp = DateTime.UtcNow
+            });
+            
+            await _mqttClient.DisconnectAsync();
         }
         catch (Exception ex)
         {
@@ -83,20 +164,31 @@ public class MqttHandler : IMqttHandler
         }
     }
 
-    public async Task PublishAsync(string topic, string message)
+    public async Task PublishAsync(string topic, string message, bool retain = false)
     {
         if (!IsConnected)
         {
-            _logger.LogWarning("Cannot publish - not connected to MQTT broker");
+            _logger.LogDebug("Cannot publish - not connected to MQTT broker");
             return;
         }
 
         try
         {
-            // In real implementation, publish to MQTT broker
-            _logger.LogDebug("Publishing to {Topic}: {Message}", topic, message);
-            await Task.Delay(1);
-            OnMessagePublished?.Invoke(topic, message);
+            var prefix = _config.ApplicationData?.Mqtt?.TopicPrefix ?? "honfigurator";
+            var fullTopic = $"{prefix}/{topic}";
+            
+            var mqttMessage = new MqttApplicationMessageBuilder()
+                .WithTopic(fullTopic)
+                .WithPayload(message)
+                .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce)
+                .WithRetainFlag(retain)
+                .Build();
+            
+            await _mqttClient.PublishAsync(mqttMessage);
+            
+            _logger.LogDebug("Published to {Topic}: {Message}", fullTopic, 
+                message.Length > 100 ? message[..100] + "..." : message);
+            OnMessagePublished?.Invoke(fullTopic, message);
         }
         catch (Exception ex)
         {
@@ -104,13 +196,105 @@ public class MqttHandler : IMqttHandler
         }
     }
 
-    public async Task PublishJsonAsync<T>(string topic, T data)
+    public async Task PublishJsonAsync<T>(string topic, T data, bool retain = false)
     {
         var json = JsonSerializer.Serialize(data, new JsonSerializerOptions 
         { 
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase 
+            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+            WriteIndented = false
         });
-        await PublishAsync(topic, json);
+        await PublishAsync(topic, json, retain);
+    }
+
+    // Convenience methods for common events
+    
+    public async Task PublishServerStatusAsync(int serverId, string status, object? data = null)
+    {
+        var payload = new Dictionary<string, object>
+        {
+            ["event_type"] = status,
+            ["server_id"] = serverId,
+            ["server_name"] = _config.HonData.ServerName,
+            ["timestamp"] = DateTime.UtcNow
+        };
+        
+        if (data != null)
+        {
+            foreach (var prop in data.GetType().GetProperties())
+            {
+                payload[ToSnakeCase(prop.Name)] = prop.GetValue(data) ?? "";
+            }
+        }
+        
+        await PublishJsonAsync($"server/{serverId}/status", payload);
+    }
+
+    public async Task PublishMatchEventAsync(int serverId, string eventType, object? data = null)
+    {
+        var payload = new Dictionary<string, object>
+        {
+            ["event_type"] = eventType,
+            ["server_id"] = serverId,
+            ["server_name"] = _config.HonData.ServerName,
+            ["timestamp"] = DateTime.UtcNow
+        };
+        
+        if (data != null)
+        {
+            foreach (var prop in data.GetType().GetProperties())
+            {
+                payload[ToSnakeCase(prop.Name)] = prop.GetValue(data) ?? "";
+            }
+        }
+        
+        await PublishJsonAsync($"server/{serverId}/match", payload);
+    }
+
+    public async Task PublishPlayerEventAsync(int serverId, string eventType, string playerName, object? data = null)
+    {
+        var payload = new Dictionary<string, object>
+        {
+            ["event_type"] = eventType,
+            ["server_id"] = serverId,
+            ["server_name"] = _config.HonData.ServerName,
+            ["player_name"] = playerName,
+            ["timestamp"] = DateTime.UtcNow
+        };
+        
+        if (data != null)
+        {
+            foreach (var prop in data.GetType().GetProperties())
+            {
+                payload[ToSnakeCase(prop.Name)] = prop.GetValue(data) ?? "";
+            }
+        }
+        
+        await PublishJsonAsync($"server/{serverId}/player", payload);
+    }
+
+    public async Task PublishManagerEventAsync(string eventType, object? data = null)
+    {
+        var payload = new Dictionary<string, object>
+        {
+            ["event_type"] = eventType,
+            ["server_name"] = _config.HonData.ServerName,
+            ["timestamp"] = DateTime.UtcNow
+        };
+        
+        if (data != null)
+        {
+            foreach (var prop in data.GetType().GetProperties())
+            {
+                payload[ToSnakeCase(prop.Name)] = prop.GetValue(data) ?? "";
+            }
+        }
+        
+        await PublishJsonAsync("manager/status", payload);
+    }
+
+    private static string ToSnakeCase(string str)
+    {
+        return string.Concat(str.Select((x, i) => i > 0 && char.IsUpper(x) ? "_" + x : x.ToString())).ToLower();
     }
 
     public void Dispose()
@@ -122,6 +306,8 @@ public class MqttHandler : IMqttHandler
         {
             DisconnectAsync().GetAwaiter().GetResult();
         }
+        
+        _mqttClient?.Dispose();
     }
 }
 
@@ -130,9 +316,40 @@ public class MqttHandler : IMqttHandler
 /// </summary>
 public static class MqttTopics
 {
-    public const string ServerStatus = "honfigurator/server/status";
-    public const string ServerMatch = "honfigurator/server/match";
-    public const string ServerPlayer = "honfigurator/server/player";
-    public const string ManagerStatus = "honfigurator/manager/status";
-    public const string ManagerAlert = "honfigurator/manager/alert";
+    // Server events
+    public const string ServerStatus = "server/{0}/status";
+    public const string ServerMatch = "server/{0}/match";
+    public const string ServerPlayer = "server/{0}/player";
+    
+    // Manager events
+    public const string ManagerStatus = "manager/status";
+    public const string ManagerAlert = "manager/alert";
+}
+
+/// <summary>
+/// MQTT event types
+/// </summary>
+public static class MqttEventTypes
+{
+    // Server status events
+    public const string ServerReady = "server_ready";
+    public const string ServerOccupied = "server_occupied";
+    public const string ServerOffline = "server_offline";
+    public const string Heartbeat = "heartbeat";
+    
+    // Match events
+    public const string LobbyCreated = "lobby_created";
+    public const string LobbyClosed = "lobby_closed";
+    public const string MatchStarted = "match_started";
+    public const string MatchEnded = "match_ended";
+    
+    // Player events
+    public const string PlayerJoined = "player_joined";
+    public const string PlayerLeft = "player_left";
+    public const string PlayerKicked = "player_kicked";
+    
+    // Manager events
+    public const string ManagerOnline = "online";
+    public const string ManagerOffline = "offline";
+    public const string ManagerShutdown = "shutdown";
 }

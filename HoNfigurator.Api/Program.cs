@@ -104,6 +104,14 @@ builder.Services.AddSingleton<IGameLogReader, GameLogReader>();
 // Register ProxyService for managing proxy processes
 builder.Services.AddSingleton<IProxyService, ProxyService>();
 
+// Register MQTT Handler for publishing events
+builder.Services.AddSingleton<IMqttHandler>(sp =>
+{
+    var logger = sp.GetRequiredService<ILogger<MqttHandler>>();
+    var config = sp.GetRequiredService<HoNConfiguration>();
+    return new MqttHandler(logger, config);
+});
+
 // Register GameServerListener for receiving status updates from game servers
 builder.Services.AddSingleton<IGameServerListener>(sp =>
 {
@@ -111,13 +119,13 @@ builder.Services.AddSingleton<IGameServerListener>(sp =>
     var serverManager = sp.GetRequiredService<IGameServerManager>();
     var logReader = sp.GetRequiredService<IGameLogReader>();
     var config = sp.GetRequiredService<HoNConfiguration>();
-    return new GameServerListener(logger, serverManager, logReader, config);
+    var mqttHandler = sp.GetRequiredService<IMqttHandler>();
+    return new GameServerListener(logger, serverManager, logReader, config, mqttHandler);
 });
 
 // Register core services
 builder.Services.AddSingleton<HealthCheckManager>(sp => new HealthCheckManager(sp.GetRequiredService<ILogger<HealthCheckManager>>(), sp.GetRequiredService<HoNConfiguration>()));
 builder.Services.AddSingleton<MatchParser>();
-builder.Services.AddSingleton<MqttHandler>();
 builder.Services.AddSingleton<ScheduledTasksService>();
 builder.Services.AddSingleton<CowMasterService>();
 builder.Services.AddSingleton<GameEventDispatcher>();
@@ -246,6 +254,25 @@ if (managerPort > 0)
     
     await listener.StartAsync(managerPort);
     Console.WriteLine($"    GameServer Listener on port {managerPort}");
+}
+
+// Start MQTT connection if enabled
+var mqttHandler = app.Services.GetRequiredService<IMqttHandler>();
+if (mqttHandler.IsEnabled)
+{
+    var connected = await mqttHandler.ConnectAsync();
+    if (connected)
+    {
+        Console.WriteLine($"    MQTT connected to {config.ApplicationData?.Mqtt?.Host}:{config.ApplicationData?.Mqtt?.Port}");
+    }
+    else
+    {
+        Console.WriteLine("    MQTT connection failed (check configuration)");
+    }
+}
+else
+{
+    Console.WriteLine("    MQTT disabled (enable in config to use)");
 }
 
 app.Run();

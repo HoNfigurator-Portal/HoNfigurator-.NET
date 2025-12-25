@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 using HoNfigurator.Core.Models;
+using HoNfigurator.Core.Connectors;
 
 namespace HoNfigurator.GameServer.Services;
 
@@ -39,10 +40,12 @@ public class GameServerListener : IGameServerListener
     private readonly IGameServerManager _serverManager;
     private readonly IGameLogReader _logReader;
     private readonly HoNConfiguration _config;
+    private readonly IMqttHandler? _mqttHandler;
     private TcpListener? _listener;
     private CancellationTokenSource? _cts;
     private readonly ConcurrentDictionary<int, TcpClient> _clientConnections = new();
     private readonly ConcurrentDictionary<int, bool> _botMatchCheckDone = new();
+    private readonly ConcurrentDictionary<int, HashSet<string>> _previousPlayers = new(); // Track players for join/leave events
     
     public bool IsListening { get; private set; }
 
@@ -50,12 +53,14 @@ public class GameServerListener : IGameServerListener
         ILogger<GameServerListener> logger, 
         IGameServerManager serverManager, 
         IGameLogReader logReader,
-        HoNConfiguration config)
+        HoNConfiguration config,
+        IMqttHandler? mqttHandler = null)
     {
         _logger = logger;
         _serverManager = serverManager;
         _logReader = logReader;
         _config = config;
+        _mqttHandler = mqttHandler;
     }
 
     public async Task StartAsync(int port)
@@ -414,6 +419,17 @@ public class GameServerListener : IGameServerListener
         {
             instance.Status = ServerStatus.Ready;
             _logger.LogInformation("Mapped to server #{Id}", instance.Id);
+            
+            // Publish MQTT event
+            if (_mqttHandler != null)
+            {
+                await _mqttHandler.PublishServerStatusAsync(instance.Id, MqttEventTypes.ServerReady, new
+                {
+                    Port = instance.Port,
+                    Name = instance.Name
+                });
+            }
+            
             return await Task.FromResult<int?>(instance.Id);
         }
         
@@ -431,9 +447,20 @@ public class GameServerListener : IGameServerListener
             instance.Status = ServerStatus.Offline;
             instance.NumClients = 0;
             instance.GamePhase = string.Empty;
+            
+            // Publish MQTT event
+            if (_mqttHandler != null)
+            {
+                await _mqttHandler.PublishServerStatusAsync(serverId, MqttEventTypes.ServerOffline, new
+                {
+                    Port = instance.Port,
+                    Name = instance.Name
+                });
+            }
         }
-
-        await Task.CompletedTask;
+        
+        // Clear player tracking for this server
+        _previousPlayers.TryRemove(serverId, out _);
     }
 
     private async Task HandleServerStatusAsync(byte[] data, int length, int serverId)
@@ -463,6 +490,9 @@ public class GameServerListener : IGameServerListener
         var matchStarted = data[11];
         var gamePhase = data[40];
 
+        var previousPhase = instance.GamePhase;
+        var previousStatus = instance.Status;
+
         // Update instance
         instance.NumClients = numClients;
         instance.CpuPercent = cpuLoad;
@@ -478,6 +508,20 @@ public class GameServerListener : IGameServerListener
             instance.Status = ServerStatus.Ready;
         }
 
+        // Publish status change events
+        if (_mqttHandler != null && previousStatus != instance.Status)
+        {
+            var eventType = instance.Status == ServerStatus.Occupied 
+                ? MqttEventTypes.ServerOccupied 
+                : MqttEventTypes.ServerReady;
+            await _mqttHandler.PublishServerStatusAsync(serverId, eventType, new
+            {
+                Phase = instance.GamePhase,
+                NumClients = numClients,
+                MatchStarted = matchStarted > 0
+            });
+        }
+
         // Parse player data if packet is longer than 54 bytes
         if (length > 54 && numClients > 0)
         {
@@ -485,15 +529,42 @@ public class GameServerListener : IGameServerListener
             // Populate team assignments from game log
             _logReader.PopulateTeams(instance);
             
+            // Track player join/leave events
+            await TrackPlayerEventsAsync(serverId, instance.Players);
+            
             // Check for bot match when game starts
             if (matchStarted > 0 && !_botMatchCheckDone.GetValueOrDefault(serverId, false))
             {
                 await CheckBotMatchAsync(instance);
                 _botMatchCheckDone[serverId] = true;
+                
+                // Publish match started event
+                if (_mqttHandler != null)
+                {
+                    await _mqttHandler.PublishMatchEventAsync(serverId, MqttEventTypes.MatchStarted, new
+                    {
+                        PlayerCount = numClients,
+                        Players = instance.Players.Select(p => p.Name).ToList(),
+                        Phase = instance.GamePhase
+                    });
+                }
             }
         }
         else if (numClients == 0)
         {
+            // Check if we had players before (match ended)
+            if (_previousPlayers.TryGetValue(serverId, out var prevPlayers) && prevPlayers.Count > 0)
+            {
+                // Publish match ended event
+                if (_mqttHandler != null)
+                {
+                    await _mqttHandler.PublishMatchEventAsync(serverId, MqttEventTypes.MatchEnded, new
+                    {
+                        PreviousPlayerCount = prevPlayers.Count
+                    });
+                }
+            }
+            
             instance.Players.Clear();
             instance.PlayersByTeam.Legion.Clear();
             instance.PlayersByTeam.Hellbourne.Clear();
@@ -652,5 +723,50 @@ public class GameServerListener : IGameServerListener
             7 => "Post-Game",
             _ => $"Phase {phase}"
         };
+    }
+
+    /// <summary>
+    /// Track player join/leave events and publish MQTT notifications
+    /// </summary>
+    private async Task TrackPlayerEventsAsync(int serverId, List<PlayerInfo> currentPlayers)
+    {
+        var currentPlayerNames = currentPlayers.Select(p => p.Name).ToHashSet();
+        
+        if (!_previousPlayers.TryGetValue(serverId, out var previousPlayerNames))
+        {
+            previousPlayerNames = new HashSet<string>();
+        }
+
+        // Find players who joined (in current but not in previous)
+        var joinedPlayers = currentPlayerNames.Except(previousPlayerNames).ToList();
+        
+        // Find players who left (in previous but not in current)
+        var leftPlayers = previousPlayerNames.Except(currentPlayerNames).ToList();
+
+        // Publish MQTT events for joined players
+        if (_mqttHandler != null)
+        {
+            foreach (var playerName in joinedPlayers)
+            {
+                var player = currentPlayers.FirstOrDefault(p => p.Name == playerName);
+                await _mqttHandler.PublishPlayerEventAsync(serverId, MqttEventTypes.PlayerJoined, playerName, new
+                {
+                    AccountId = player?.AccountId ?? 0,
+                    Location = player?.Location ?? "",
+                    Ping = player?.AvgPing ?? 0
+                });
+                _logger.LogInformation("Player joined Server #{ServerId}: {Player}", serverId, playerName);
+            }
+
+            // Publish MQTT events for players who left
+            foreach (var playerName in leftPlayers)
+            {
+                await _mqttHandler.PublishPlayerEventAsync(serverId, MqttEventTypes.PlayerLeft, playerName, null);
+                _logger.LogInformation("Player left Server #{ServerId}: {Player}", serverId, playerName);
+            }
+        }
+
+        // Update the tracking dictionary
+        _previousPlayers[serverId] = currentPlayerNames;
     }
 }
