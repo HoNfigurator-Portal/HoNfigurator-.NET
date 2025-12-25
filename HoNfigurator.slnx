@@ -3,4 +3,5 @@
   <Project Path="HoNfigurator.Core/HoNfigurator.Core.csproj" />
   <Project Path="HoNfigurator.GameServer/HoNfigurator.GameServer.csproj" />
   <Project Path="HoNfigurator.Dashboard/HoNfigurator.Dashboard.csproj" />
+  <Project Path="HoNfigurator.Tests/HoNfigurator.Tests.csproj" />
 </Solution>

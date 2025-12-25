@@ -70,9 +70,13 @@ public class PatchingService : IPatchingService
             Timeout = TimeSpan.FromMinutes(30)
         };
         
-        // Set user agent like Python version
-        _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
-            $"S2 Games/Heroes of Newerth/{config.HonData.ManVersion}/x86_64");
+        // Set user agent like Python version - use TryParseAdd to avoid format exceptions
+        // Format: ProductName/Version (comment)
+        var version = config.HonData?.ManVersion ?? "4.10.1";
+        _httpClient.DefaultRequestHeaders.UserAgent.Add(
+            new System.Net.Http.Headers.ProductInfoHeaderValue("HoNfigurator", version));
+        _httpClient.DefaultRequestHeaders.UserAgent.Add(
+            new System.Net.Http.Headers.ProductInfoHeaderValue("(HoN-Server-Manager)"));
         _httpClient.DefaultRequestHeaders.Add("Server-Launcher", "HoNfigurator");
         
         _currentVersion = GetLocalVersion();
