@@ -1,7 +1,6 @@
 using FluentAssertions;
-using HoNfigurator.Api.Hubs;
-using HoNfigurator.Core.Connectors;
 using HoNfigurator.Core.Models;
+using HoNfigurator.Core.Connectors;
 using Moq;
 using Xunit;
 

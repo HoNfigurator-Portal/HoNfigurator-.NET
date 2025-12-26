@@ -252,3 +252,16 @@ public class SystemStats
     [JsonPropertyName("svr_total")]
     public int SvrTotal { get; set; }
 }
+
+/// <summary>
+/// Management portal connection status
+/// </summary>
+public record ManagementPortalStatus
+{
+    public bool Enabled { get; init; }
+    public bool Connected { get; init; }
+    public bool Registered { get; init; }
+    public string? ServerName { get; init; }
+    public string? PortalUrl { get; init; }
+    public DateTime LastUpdated { get; init; } = DateTime.UtcNow;
+}

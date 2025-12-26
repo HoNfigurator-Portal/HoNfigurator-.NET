@@ -402,25 +402,4 @@ public class MqttEndpointsTests
     }
 
     #endregion
-
-    #region DashboardHub MQTT Command Tests
-
-    [Fact]
-    public void DashboardHub_MqttCommands_ShouldBeDefined()
-    {
-        // Commands that should be available
-        var expectedCommands = new[]
-        {
-            "mqtt",
-            "mqtt status",
-            "mqtt connect",
-            "mqtt disconnect",
-            "mqtt test"
-        };
-        
-        // These are string patterns we expect in the hub's ExecuteCommand handler
-        expectedCommands.Should().HaveCount(5);
-    }
-
-    #endregion
 }

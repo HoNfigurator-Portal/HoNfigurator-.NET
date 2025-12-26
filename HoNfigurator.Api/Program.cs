@@ -1,5 +1,4 @@
 using HoNfigurator.Api.Endpoints;
-using HoNfigurator.Api.Hubs;
 using HoNfigurator.Api.Services;
 using HoNfigurator.Core.Auth;
 using HoNfigurator.Core.Connectors;
@@ -95,9 +94,6 @@ builder.Services.AddSingleton<IGameServerManager>(sp =>
 
     return manager;
 });
-
-// Add SignalR
-builder.Services.AddSignalR();
 
 // Add HTTP client for external services
 builder.Services.AddHttpClient();
@@ -233,10 +229,8 @@ builder.Services.AddSingleton<RolesDatabase>(sp =>
 });
 
 // Add hosted services
-builder.Services.AddHostedService<StatusBroadcastService>();
 builder.Services.AddHostedService<HealthCheckBackgroundService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ScheduledTasksService>());
-builder.Services.AddHostedService<NotificationBroadcastService>();
 
 // Add ConnectionManagerService for auto-connect to MasterServer/ChatServer
 builder.Services.AddHostedService<ConnectionManagerService>();
@@ -324,19 +318,16 @@ app.MapScalarApiReference(options =>
 
 app.UseCors();
 
-// Serve static files (dashboard)
-app.UseStaticFiles();
-
-// Map SignalR hub
-app.MapHub<DashboardHub>("/hubs/dashboard");
-
 // Map API endpoints
 app.MapApiEndpoints();
 
-// Map root to index.html, handle login page
-app.MapGet("/", () => Results.File(
-    Path.Combine(builder.Environment.WebRootPath ?? "wwwroot", "index.html"),
-    "text/html"));
+// Map root to API info
+app.MapGet("/", () => Results.Ok(new { 
+    name = "HoNfigurator API", 
+    version = "1.0.0-dotnet",
+    docs = "/scalar/v1",
+    openapi = "/openapi/v1.json"
+}));
 
 // Run
 var port = configService.Configuration.HonData.ApiPort;
@@ -352,10 +343,8 @@ Console.WriteLine($"""
     ║    HTTP:  http://localhost:{port,-5}                         ║
     ║    HTTPS: https://localhost:{port + 1,-5}                        ║
     ║                                                           ║
-    ║  Dashboard:   http://localhost:{port,-5}                     ║
     ║  API Docs:    http://localhost:{port}/scalar/v1              ║
     ║  OpenAPI:     http://localhost:{port}/openapi/v1.json        ║
-    ║  SignalR Hub: /hubs/dashboard                             ║
     ╚═══════════════════════════════════════════════════════════╝  
 
     """);
