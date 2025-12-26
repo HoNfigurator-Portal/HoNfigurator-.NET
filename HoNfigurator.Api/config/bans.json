@@ -1,13 +1,1 @@
-[
-  {
-    "AccountId": 123456,
-    "PlayerName": "TestPlayer",
-    "Reason": "Testing ban system",
-    "BannedBy": "Admin",
-    "BannedAt": "2025-12-24T14:30:33.4057772Z",
-    "ExpiresAt": "2025-12-25T14:30:33.4058209Z",
-    "Type": 1,
-    "IsExpired": false,
-    "RemainingTime": "23:59:59.9938605"
-  }
-]
+[]

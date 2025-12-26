@@ -332,6 +332,9 @@ public class GameServerModelsTests
         response.Version.Should().Be("1.0.0");
         response.MasterServerConnected.Should().BeFalse();
         response.ChatServerConnected.Should().BeFalse();
+        response.ManagementPortalConnected.Should().BeFalse();
+        response.ManagementPortalRegistered.Should().BeFalse();
+        response.ManagementPortalServerName.Should().BeNull();
         response.TotalServers.Should().Be(0);
         response.OnlineServers.Should().Be(0);
         response.TotalPlayers.Should().Be(0);
@@ -362,6 +365,9 @@ public class GameServerModelsTests
         {
             ServerName = "TestServer",
             MasterServerConnected = true,
+            ManagementPortalConnected = true,
+            ManagementPortalRegistered = true,
+            ManagementPortalServerName = "MyServer",
             TotalServers = 5
         };
 
@@ -371,7 +377,76 @@ public class GameServerModelsTests
         // Assert
         json.Should().Contain("\"server_name\"");
         json.Should().Contain("\"master_server_connected\"");
+        json.Should().Contain("\"management_portal_connected\"");
+        json.Should().Contain("\"management_portal_registered\"");
+        json.Should().Contain("\"management_portal_server_name\"");
         json.Should().Contain("\"total_servers\"");
+    }
+
+    [Fact]
+    public void ServerStatusResponse_ManagementPortalProperties_ShouldBeSettable()
+    {
+        // Arrange & Act
+        var response = new ServerStatusResponse
+        {
+            ManagementPortalConnected = true,
+            ManagementPortalRegistered = true,
+            ManagementPortalServerName = "TestPortalServer"
+        };
+
+        // Assert
+        response.ManagementPortalConnected.Should().BeTrue();
+        response.ManagementPortalRegistered.Should().BeTrue();
+        response.ManagementPortalServerName.Should().Be("TestPortalServer");
+    }
+
+    [Fact]
+    public void ServerStatusResponse_MqttProperties_ShouldBeSettable()
+    {
+        // Arrange & Act
+        var response = new ServerStatusResponse
+        {
+            MqttConnected = true,
+            MqttEnabled = true,
+            MqttBroker = "mqtt.honfigurator.app:8883"
+        };
+
+        // Assert
+        response.MqttConnected.Should().BeTrue();
+        response.MqttEnabled.Should().BeTrue();
+        response.MqttBroker.Should().Be("mqtt.honfigurator.app:8883");
+    }
+
+    [Fact]
+    public void ServerStatusResponse_MqttProperties_DefaultValues_ShouldBeFalseAndNull()
+    {
+        // Arrange & Act
+        var response = new ServerStatusResponse();
+
+        // Assert
+        response.MqttConnected.Should().BeFalse();
+        response.MqttEnabled.Should().BeFalse();
+        response.MqttBroker.Should().BeNull();
+    }
+
+    [Fact]
+    public void ServerStatusResponse_MqttSerialization_ShouldUseJsonPropertyNames()
+    {
+        // Arrange
+        var response = new ServerStatusResponse
+        {
+            MqttConnected = true,
+            MqttEnabled = true,
+            MqttBroker = "mqtt.test.com:1883"
+        };
+
+        // Act
+        var json = JsonSerializer.Serialize(response);
+
+        // Assert
+        json.Should().Contain("\"mqtt_connected\"");
+        json.Should().Contain("\"mqtt_enabled\"");
+        json.Should().Contain("\"mqtt_broker\"");
     }
 
     #endregion

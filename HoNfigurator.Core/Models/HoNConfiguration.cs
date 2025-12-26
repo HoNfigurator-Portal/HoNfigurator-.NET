@@ -195,6 +195,9 @@ public class ApplicationData
 
     [JsonPropertyName("disk_monitoring")]
     public DiskMonitoringConfiguration? DiskMonitoring { get; set; }
+
+    [JsonPropertyName("management_portal")]
+    public ManagementPortalSettings? ManagementPortal { get; set; }
 }
 
 public class StorageConfiguration
@@ -534,4 +537,49 @@ public class CpuAffinityConfiguration
 
     [JsonPropertyName("priority_level")]
     public string PriorityLevel { get; set; } = "Normal";
+}
+
+/// <summary>
+/// Configuration for management.honfigurator.app integration
+/// </summary>
+public class ManagementPortalSettings
+{
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; } = false;
+
+    [JsonPropertyName("portal_url")]
+    public string PortalUrl { get; set; } = "https://management.honfigurator.app:3001";
+
+    [JsonPropertyName("mqtt_host")]
+    public string MqttHost { get; set; } = "mqtt.honfigurator.app";
+
+    [JsonPropertyName("mqtt_port")]
+    public int MqttPort { get; set; } = 8883;
+
+    [JsonPropertyName("mqtt_use_tls")]
+    public bool MqttUseTls { get; set; } = true;
+
+    [JsonPropertyName("discord_user_id")]
+    public string? DiscordUserId { get; set; }
+
+    [JsonPropertyName("server_id")]
+    public string? ServerId { get; set; }
+
+    [JsonPropertyName("api_key")]
+    public string? ApiKey { get; set; }
+
+    [JsonPropertyName("status_report_interval_seconds")]
+    public int StatusReportIntervalSeconds { get; set; } = 30;
+
+    [JsonPropertyName("auto_register")]
+    public bool AutoRegister { get; set; } = true;
+
+    [JsonPropertyName("ca_certificate_path")]
+    public string? CaCertificatePath { get; set; }
+
+    [JsonPropertyName("client_certificate_path")]
+    public string? ClientCertificatePath { get; set; }
+
+    [JsonPropertyName("client_key_path")]
+    public string? ClientKeyPath { get; set; }
 }

@@ -94,7 +94,8 @@ public class HealthCheckManager
             CheckChatServerAsync(cancellationToken),
             CheckDatabaseAsync(cancellationToken),
             CheckDiskSpaceAsync(cancellationToken),
-            CheckNetworkAsync(cancellationToken)
+            CheckNetworkAsync(cancellationToken),
+            CheckManagementPortalAsync(cancellationToken)
         };
 
         var completedChecks = await Task.WhenAll(tasks);
@@ -304,6 +305,110 @@ public class HealthCheckManager
                 Status = "Error",
                 Message = ex.Message,
                 ResponseTime = sw.Elapsed
+            };
+        }
+    }
+
+    /// <summary>
+    /// Check Management Portal connectivity (management.honfigurator.app)
+    /// </summary>
+    public async Task<HealthCheckResult> CheckManagementPortalAsync(CancellationToken cancellationToken = default)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        
+        // Check if management portal is enabled
+        var portalSettings = _config.ApplicationData?.ManagementPortal;
+        if (portalSettings == null || !portalSettings.Enabled)
+        {
+            sw.Stop();
+            return new HealthCheckResult
+            {
+                Name = "ManagementPortal",
+                IsHealthy = true, // Not unhealthy, just disabled
+                Status = "Disabled",
+                Message = "Management portal integration is disabled",
+                ResponseTime = sw.Elapsed,
+                Data = new Dictionary<string, object>
+                {
+                    ["Enabled"] = false
+                }
+            };
+        }
+
+        try
+        {
+            var portalUrl = portalSettings.PortalUrl ?? "https://management.honfigurator.app:3001";
+            var pingUrl = $"{portalUrl}/api/ping";
+            
+            var response = await _httpClient.GetAsync(pingUrl, cancellationToken);
+            sw.Stop();
+
+            var isHealthy = response.IsSuccessStatusCode;
+
+            return new HealthCheckResult
+            {
+                Name = "ManagementPortal",
+                IsHealthy = isHealthy,
+                Status = isHealthy ? "Connected" : "Unreachable",
+                Message = isHealthy ? null : $"HTTP {(int)response.StatusCode}",
+                ResponseTime = sw.Elapsed,
+                Data = new Dictionary<string, object>
+                {
+                    ["Enabled"] = true,
+                    ["PortalUrl"] = portalUrl,
+                    ["StatusCode"] = (int)response.StatusCode
+                }
+            };
+        }
+        catch (HttpRequestException ex)
+        {
+            sw.Stop();
+            return new HealthCheckResult
+            {
+                Name = "ManagementPortal",
+                IsHealthy = false,
+                Status = "ConnectionError",
+                Message = ex.Message,
+                ResponseTime = sw.Elapsed,
+                Data = new Dictionary<string, object>
+                {
+                    ["Enabled"] = true,
+                    ["Error"] = "Connection failed"
+                }
+            };
+        }
+        catch (TaskCanceledException)
+        {
+            sw.Stop();
+            return new HealthCheckResult
+            {
+                Name = "ManagementPortal",
+                IsHealthy = false,
+                Status = "Timeout",
+                Message = "Request timed out",
+                ResponseTime = sw.Elapsed,
+                Data = new Dictionary<string, object>
+                {
+                    ["Enabled"] = true,
+                    ["Error"] = "Timeout"
+                }
+            };
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            return new HealthCheckResult
+            {
+                Name = "ManagementPortal",
+                IsHealthy = false,
+                Status = "Error",
+                Message = ex.Message,
+                ResponseTime = sw.Elapsed,
+                Data = new Dictionary<string, object>
+                {
+                    ["Enabled"] = true,
+                    ["Error"] = ex.GetType().Name
+                }
             };
         }
     }

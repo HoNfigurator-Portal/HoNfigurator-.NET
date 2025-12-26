@@ -82,6 +82,16 @@ public interface INotificationService
     
     void CheckResourceThresholds(double cpuPercent, double memoryPercent, double diskPercent);
     void NotifyServerStatusChange(int serverId, string serverName, string previousStatus, string newStatus);
+    
+    /// <summary>
+    /// Notify when management portal connection state changes
+    /// </summary>
+    void NotifyPortalConnectionChange(bool isConnected, string? errorMessage = null);
+    
+    /// <summary>
+    /// Notify when server is registered with management portal
+    /// </summary>
+    void NotifyPortalRegistration(bool success, string? serverName = null, string? errorMessage = null);
 }
 
 public class NotificationService : INotificationService
@@ -300,5 +310,65 @@ public class NotificationService : INotificationService
         
         _alertCooldowns[alertKey] = DateTime.UtcNow;
         SendAlert(title, message, serverId, priority);
+    }
+
+    public void NotifyPortalConnectionChange(bool isConnected, string? errorMessage = null)
+    {
+        var alertKey = isConnected ? "portal_connected" : "portal_disconnected";
+        
+        if (isConnected)
+        {
+            SendNotification(new Notification
+            {
+                Title = "Management Portal Connected",
+                Message = "Successfully connected to management.honfigurator.app",
+                Type = NotificationType.Success,
+                Priority = NotificationPriority.Normal,
+                Source = "ManagementPortal",
+                PlaySound = false,
+                Data = new Dictionary<string, object>
+                {
+                    ["portal_url"] = "https://management.honfigurator.app:3001"
+                }
+            });
+        }
+        else
+        {
+            SendThrottledAlert(alertKey, "Management Portal Disconnected",
+                errorMessage ?? "Lost connection to management.honfigurator.app",
+                NotificationPriority.High);
+        }
+    }
+
+    public void NotifyPortalRegistration(bool success, string? serverName = null, string? errorMessage = null)
+    {
+        if (success)
+        {
+            SendNotification(new Notification
+            {
+                Title = "Portal Registration Successful",
+                Message = string.Format("Server '{0}' is now registered with the management portal", serverName ?? "Unknown"),
+                Type = NotificationType.Success,
+                Priority = NotificationPriority.Normal,
+                Source = "ManagementPortal",
+                Data = new Dictionary<string, object>
+                {
+                    ["server_name"] = serverName ?? "Unknown",
+                    ["portal_url"] = "https://management.honfigurator.app:3001"
+                }
+            });
+        }
+        else
+        {
+            SendNotification(new Notification
+            {
+                Title = "Portal Registration Failed",
+                Message = errorMessage ?? "Failed to register with management portal",
+                Type = NotificationType.Error,
+                Priority = NotificationPriority.High,
+                Source = "ManagementPortal",
+                RequiresAcknowledgement = true
+            });
+        }
     }
 }

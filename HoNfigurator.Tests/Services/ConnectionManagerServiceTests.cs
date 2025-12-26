@@ -15,12 +15,14 @@ public class ConnectionManagerServiceTests
     private readonly Mock<ILogger<ConnectionManagerService>> _loggerMock;
     private readonly Mock<IMasterServerConnector> _masterServerMock;
     private readonly Mock<IChatServerConnector> _chatServerMock;
+    private readonly Mock<IGameServerManager> _serverManagerMock;
 
     public ConnectionManagerServiceTests()
     {
         _loggerMock = new Mock<ILogger<ConnectionManagerService>>();
         _masterServerMock = new Mock<IMasterServerConnector>();
         _chatServerMock = new Mock<IChatServerConnector>();
+        _serverManagerMock = new Mock<IGameServerManager>();
     }
 
     private ConnectionManagerService CreateService(HoNConfiguration? config = null)
@@ -30,6 +32,7 @@ public class ConnectionManagerServiceTests
             _loggerMock.Object,
             _masterServerMock.Object,
             _chatServerMock.Object,
+            _serverManagerMock.Object,
             config);
     }
 

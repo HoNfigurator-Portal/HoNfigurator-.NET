@@ -67,6 +67,13 @@
                                                    "provider":  "local",
                                                    "base_url":  "http://localhost:5050/api/replays/download",
                                                    "enabled":  true
+                                               },
+                             "management_portal": {
+                                                   "enabled": true,
+                                                   "portal_url": "http://localhost:5200",
+                                                   "discord_user_id": "336728876745228290",
+                                                   "auto_register": true,
+                                                   "status_report_interval_seconds": 30
                                                }
                          }
 }

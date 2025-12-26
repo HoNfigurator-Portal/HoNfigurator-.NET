@@ -127,6 +127,28 @@ public class GameServerInstance
     
     [JsonPropertyName("proxy_enabled")]
     public bool ProxyEnabled { get; set; }
+    
+    [JsonPropertyName("skipped_frames")]
+    public int SkippedFrames { get; set; }
+    
+    [JsonPropertyName("total_frames")]
+    public long TotalFrames { get; set; }
+    
+    /// <summary>
+    /// Get skipped frame diagnostics data (for management portal integration)
+    /// </summary>
+    public object GetSkippedFrameData()
+    {
+        return new
+        {
+            server_id = Id,
+            server_name = Name,
+            port = Port,
+            skipped_frames = SkippedFrames,
+            total_frames = TotalFrames,
+            skip_rate = TotalFrames > 0 ? (double)SkippedFrames / TotalFrames * 100 : 0
+        };
+    }
 }
 
 public class ServerStatusResponse
@@ -142,6 +164,24 @@ public class ServerStatusResponse
     
     [JsonPropertyName("chat_server_connected")]
     public bool ChatServerConnected { get; set; }
+    
+    [JsonPropertyName("management_portal_connected")]
+    public bool ManagementPortalConnected { get; set; }
+    
+    [JsonPropertyName("management_portal_registered")]
+    public bool ManagementPortalRegistered { get; set; }
+    
+    [JsonPropertyName("management_portal_server_name")]
+    public string? ManagementPortalServerName { get; set; }
+    
+    [JsonPropertyName("mqtt_connected")]
+    public bool MqttConnected { get; set; }
+    
+    [JsonPropertyName("mqtt_enabled")]
+    public bool MqttEnabled { get; set; }
+    
+    [JsonPropertyName("mqtt_broker")]
+    public string? MqttBroker { get; set; }
     
     [JsonPropertyName("total_servers")]
     public int TotalServers { get; set; }

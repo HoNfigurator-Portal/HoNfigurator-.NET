@@ -14,6 +14,7 @@ public class ConnectionManagerService : BackgroundService
     private readonly ILogger<ConnectionManagerService> _logger;
     private readonly IMasterServerConnector _masterServer;
     private readonly IChatServerConnector _chatServer;
+    private readonly IGameServerManager _serverManager;
     private readonly HoNConfiguration _config;
     
     private bool _isAuthenticated;
@@ -32,23 +33,37 @@ public class ConnectionManagerService : BackgroundService
         ILogger<ConnectionManagerService> logger,
         IMasterServerConnector masterServer,
         IChatServerConnector chatServer,
+        IGameServerManager serverManager,
         HoNConfiguration config)
     {
         _logger = logger;
         _masterServer = masterServer;
         _chatServer = chatServer;
+        _serverManager = serverManager;
         _config = config;
 
         // Subscribe to connector events (using concrete types)
         if (_masterServer is MasterServerConnector ms)
         {
-            ms.OnAuthenticated += () => { _isAuthenticated = true; OnAuthenticationChanged?.Invoke(true); };
-            ms.OnDisconnected += () => { _isAuthenticated = false; OnAuthenticationChanged?.Invoke(false); };
+            ms.OnAuthenticated += () => { 
+                _isAuthenticated = true; 
+                _serverManager.MasterServerConnected = true;
+                OnAuthenticationChanged?.Invoke(true); 
+            };
+            ms.OnDisconnected += () => { 
+                _isAuthenticated = false; 
+                _serverManager.MasterServerConnected = false;
+                OnAuthenticationChanged?.Invoke(false); 
+            };
         }
 
         if (_chatServer is ChatServerConnector cs)
         {
-            cs.OnConnected += () => { _isChatConnected = true; OnChatConnectionChanged?.Invoke(true); };
+            cs.OnConnected += () => { 
+                _isChatConnected = true; 
+                _serverManager.ChatServerConnected = true;
+                OnChatConnectionChanged?.Invoke(true); 
+            };
             cs.OnDisconnected += HandleChatDisconnected;
             cs.OnHandshakeAccepted += HandleChatHandshakeAccepted;
         }
@@ -182,6 +197,7 @@ public class ConnectionManagerService : BackgroundService
     private void HandleChatDisconnected()
     {
         _isChatConnected = false;
+        _serverManager.ChatServerConnected = false;
         OnChatConnectionChanged?.Invoke(false);
         _logger.LogWarning("Disconnected from ChatServer. Will attempt reconnect...");
     }

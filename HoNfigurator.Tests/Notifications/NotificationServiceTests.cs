@@ -510,4 +510,170 @@ public class NotificationServiceTests
     }
 
     #endregion
+
+    #region Portal Notification Tests
+
+    [Fact]
+    public void NotifyPortalConnectionChange_Connected_ShouldCreateSuccessNotification()
+    {
+        // Arrange
+        var service = CreateService();
+        Notification? received = null;
+        service.OnNotification += (_, n) => received = n;
+
+        // Act
+        service.NotifyPortalConnectionChange(true);
+
+        // Assert
+        received.Should().NotBeNull();
+        received!.Type.Should().Be(NotificationType.Success);
+        received.Title.Should().Be("Management Portal Connected");
+        received.Source.Should().Be("ManagementPortal");
+        received.Data.Should().ContainKey("portal_url");
+    }
+
+    [Fact]
+    public void NotifyPortalConnectionChange_Disconnected_ShouldCreateAlertNotification()
+    {
+        // Arrange
+        var service = CreateService();
+        service.UpdateThresholds(new AlertThresholds { AlertCooldownMinutes = 0 }); // Disable cooldown for test
+        Notification? received = null;
+        service.OnNotification += (_, n) => received = n;
+
+        // Act
+        service.NotifyPortalConnectionChange(false, "Connection timeout");
+
+        // Assert
+        received.Should().NotBeNull();
+        received!.Type.Should().Be(NotificationType.Alert);
+        received.Title.Should().Be("Management Portal Disconnected");
+        received.Message.Should().Contain("timeout");
+    }
+
+    [Fact]
+    public void NotifyPortalConnectionChange_Disconnected_WithDefaultMessage_ShouldUseDefaultMessage()
+    {
+        // Arrange
+        var service = CreateService();
+        service.UpdateThresholds(new AlertThresholds { AlertCooldownMinutes = 0 });
+        Notification? received = null;
+        service.OnNotification += (_, n) => received = n;
+
+        // Act
+        service.NotifyPortalConnectionChange(false);
+
+        // Assert
+        received.Should().NotBeNull();
+        received!.Message.Should().Contain("management.honfigurator.app");
+    }
+
+    [Fact]
+    public void NotifyPortalRegistration_Success_ShouldCreateSuccessNotification()
+    {
+        // Arrange
+        var service = CreateService();
+        Notification? received = null;
+        service.OnNotification += (_, n) => received = n;
+
+        // Act
+        service.NotifyPortalRegistration(true, "MyServer");
+
+        // Assert
+        received.Should().NotBeNull();
+        received!.Type.Should().Be(NotificationType.Success);
+        received.Title.Should().Be("Portal Registration Successful");
+        received.Message.Should().Contain("MyServer");
+        received.Data.Should().ContainKey("server_name");
+        received.Data!["server_name"].Should().Be("MyServer");
+    }
+
+    [Fact]
+    public void NotifyPortalRegistration_Failed_ShouldCreateErrorNotification()
+    {
+        // Arrange
+        var service = CreateService();
+        Notification? received = null;
+        service.OnNotification += (_, n) => received = n;
+
+        // Act
+        service.NotifyPortalRegistration(false, errorMessage: "Server already registered");
+
+        // Assert
+        received.Should().NotBeNull();
+        received!.Type.Should().Be(NotificationType.Error);
+        received.Title.Should().Be("Portal Registration Failed");
+        received.Message.Should().Contain("Server already registered");
+        received.RequiresAcknowledgement.Should().BeTrue();
+    }
+
+    [Fact]
+    public void NotifyPortalRegistration_Failed_WithDefaultMessage_ShouldUseDefaultMessage()
+    {
+        // Arrange
+        var service = CreateService();
+        Notification? received = null;
+        service.OnNotification += (_, n) => received = n;
+
+        // Act
+        service.NotifyPortalRegistration(false);
+
+        // Assert
+        received.Should().NotBeNull();
+        received!.Message.Should().Contain("Failed to register");
+    }
+
+    [Fact]
+    public void NotifyPortalConnectionChange_ShouldThrottleDisconnectedAlerts()
+    {
+        // Arrange
+        var service = CreateService();
+        service.UpdateThresholds(new AlertThresholds { AlertCooldownMinutes = 5 });
+        int eventCount = 0;
+        service.OnNotification += (_, _) => eventCount++;
+
+        // Act
+        service.NotifyPortalConnectionChange(false);
+        service.NotifyPortalConnectionChange(false);
+        service.NotifyPortalConnectionChange(false);
+
+        // Assert - should only fire once due to throttling
+        eventCount.Should().Be(1);
+    }
+
+    [Fact]
+    public void NotifyPortalConnectionChange_Connected_ShouldNotThrottle()
+    {
+        // Arrange
+        var service = CreateService();
+        int eventCount = 0;
+        service.OnNotification += (_, _) => eventCount++;
+
+        // Act
+        service.NotifyPortalConnectionChange(true);
+        service.NotifyPortalConnectionChange(true);
+        service.NotifyPortalConnectionChange(true);
+
+        // Assert - connection success notifications are not throttled
+        eventCount.Should().Be(3);
+    }
+
+    [Fact]
+    public void NotifyPortalRegistration_Success_ShouldContainPortalUrl()
+    {
+        // Arrange
+        var service = CreateService();
+        Notification? received = null;
+        service.OnNotification += (_, n) => received = n;
+
+        // Act
+        service.NotifyPortalRegistration(true, "TestServer");
+
+        // Assert
+        received.Should().NotBeNull();
+        received!.Data.Should().ContainKey("portal_url");
+        received.Data!["portal_url"].Should().Be("https://management.honfigurator.app:3001");
+    }
+
+    #endregion
 }

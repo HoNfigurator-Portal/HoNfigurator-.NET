@@ -172,6 +172,9 @@ builder.Services.AddSingleton<GameEventDispatcher>();
 builder.Services.AddSingleton<BanManager>();
 builder.Services.AddSingleton<AuthService>(sp => new AuthService(sp.GetRequiredService<HoNConfiguration>()));
 builder.Services.AddSingleton<AdvancedMetricsService>();
+builder.Services.AddSingleton<BackupRestoreService>(sp => new BackupRestoreService(
+    sp.GetRequiredService<ILogger<BackupRestoreService>>(),
+    (ConfigurationService)sp.GetRequiredService<IConfigurationService>()));
 
 // Register new services from Python port
 builder.Services.AddSingleton<IAutoPingListener>(sp =>
@@ -247,6 +250,15 @@ builder.Services.AddSingleton<AutoScalingService>(sp =>
     return new AutoScalingService(logger, serverManager, config);
 });
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AutoScalingService>());
+
+// Register Management Portal Connector for integration with management.honfigurator.app
+builder.Services.AddSingleton<IManagementPortalConnector>(sp =>
+{
+    var logger = sp.GetRequiredService<ILogger<ManagementPortalConnector>>();
+    var config = sp.GetRequiredService<HoNConfiguration>();
+    return new ManagementPortalConnector(logger, config);
+});
+builder.Services.AddHostedService<ManagementPortalBackgroundService>();
 
 // Add CORS
 builder.Services.AddCors(options =>

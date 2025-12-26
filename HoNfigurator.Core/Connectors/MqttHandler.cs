@@ -1,4 +1,5 @@
-﻿using System.Text;
+﻿using System.Security.Cryptography.X509Certificates;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using MQTTnet;
@@ -29,6 +30,7 @@ public interface IMqttHandler : IDisposable
 
 /// <summary>
 /// MQTT handler implementation using MQTTnet
+/// Supports both local MQTT and management.honfigurator.app integration
 /// </summary>
 public class MqttHandler : IMqttHandler
 {
@@ -39,7 +41,8 @@ public class MqttHandler : IMqttHandler
     private bool _disposed;
 
     public bool IsConnected => _mqttClient?.IsConnected ?? false;
-    public bool IsEnabled => _config.ApplicationData?.Mqtt?.Enabled ?? false;
+    public bool IsEnabled => (_config.ApplicationData?.Mqtt?.Enabled ?? false) 
+                          || (_config.ApplicationData?.ManagementPortal?.Enabled ?? false);
 
     public event Action? OnConnected;
     public event Action? OnDisconnected;
@@ -75,30 +78,135 @@ public class MqttHandler : IMqttHandler
             return Task.CompletedTask;
         };
         
-        // Build options if MQTT is configured
+        // Determine MQTT settings - prioritize management portal settings if enabled
+        _options = BuildMqttOptions();
+    }
+
+    private MqttClientOptions? BuildMqttOptions()
+    {
+        var managementPortal = _config.ApplicationData?.ManagementPortal;
         var mqttSettings = _config.ApplicationData?.Mqtt;
-        if (mqttSettings != null && mqttSettings.Enabled)
+        
+        // Use management portal MQTT if enabled
+        if (managementPortal?.Enabled == true)
         {
-            var clientId = $"honfigurator-{_config.HonData.ServerName}-{Environment.MachineName}";
-            
-            var optionsBuilder = new MqttClientOptionsBuilder()
-                .WithClientId(clientId)
-                .WithTcpServer(mqttSettings.Host, mqttSettings.Port)
-                .WithCleanSession(true)
-                .WithKeepAlivePeriod(TimeSpan.FromSeconds(60));
-            
-            if (!string.IsNullOrEmpty(mqttSettings.Username))
-            {
-                optionsBuilder.WithCredentials(mqttSettings.Username, mqttSettings.Password ?? "");
-            }
-            
-            if (mqttSettings.UseTls)
-            {
-                optionsBuilder.WithTlsOptions(o => o.WithCertificateValidationHandler(_ => true));
-            }
-            
-            _options = optionsBuilder.Build();
+            return BuildManagementPortalMqttOptions(managementPortal);
         }
+        
+        // Otherwise use standard MQTT settings
+        if (mqttSettings?.Enabled == true)
+        {
+            return BuildStandardMqttOptions(mqttSettings);
+        }
+        
+        return null;
+    }
+
+    private MqttClientOptions BuildManagementPortalMqttOptions(ManagementPortalSettings settings)
+    {
+        var clientId = $"honfigurator-{_config.HonData.ServerName}-{Environment.MachineName}";
+        
+        var optionsBuilder = new MqttClientOptionsBuilder()
+            .WithClientId(clientId)
+            .WithTcpServer(settings.MqttHost, settings.MqttPort)
+            .WithCleanSession(true)
+            .WithKeepAlivePeriod(TimeSpan.FromSeconds(60));
+        
+        // Management portal uses TLS with Step CA certificates
+        if (settings.MqttUseTls)
+        {
+            optionsBuilder.WithTlsOptions(o =>
+            {
+                o.WithSslProtocols(System.Security.Authentication.SslProtocols.Tls12 | 
+                                   System.Security.Authentication.SslProtocols.Tls13);
+                
+                // Load client certificate if configured
+                if (!string.IsNullOrEmpty(settings.ClientCertificatePath) && 
+                    File.Exists(settings.ClientCertificatePath))
+                {
+                    try
+                    {
+                        X509Certificate2 clientCert;
+                        
+                        if (!string.IsNullOrEmpty(settings.ClientKeyPath) && 
+                            File.Exists(settings.ClientKeyPath))
+                        {
+                            clientCert = X509Certificate2.CreateFromPemFile(
+                                settings.ClientCertificatePath, 
+                                settings.ClientKeyPath);
+                        }
+                        else
+                        {
+                            clientCert = X509CertificateLoader.LoadCertificateFromFile(settings.ClientCertificatePath);
+                        }
+                        
+                        o.WithClientCertificates(new X509Certificate2[] { clientCert });
+                        _logger.LogInformation("Loaded client certificate for MQTT TLS");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to load client certificate for MQTT");
+                    }
+                }
+                
+                // CA certificate validation
+                if (!string.IsNullOrEmpty(settings.CaCertificatePath) && 
+                    File.Exists(settings.CaCertificatePath))
+                {
+                    o.WithCertificateValidationHandler(context =>
+                    {
+                        try
+                        {
+                            var caCert = X509CertificateLoader.LoadCertificateFromFile(settings.CaCertificatePath);
+                            using var chain = new X509Chain();
+                            chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+                            chain.ChainPolicy.ExtraStore.Add(caCert);
+                            chain.ChainPolicy.VerificationFlags = 
+                                X509VerificationFlags.AllowUnknownCertificateAuthority;
+                            var cert2 = new X509Certificate2(context.Certificate);
+                            return chain.Build(cert2);
+                        }
+                        catch
+                        {
+                            return false;
+                        }
+                    });
+                }
+                else
+                {
+                    // Allow self-signed certificates for development
+                    o.WithCertificateValidationHandler(_ => true);
+                }
+            });
+        }
+        
+        _logger.LogInformation("Configured MQTT for management portal: {Host}:{Port} (TLS: {Tls})",
+            settings.MqttHost, settings.MqttPort, settings.MqttUseTls);
+        
+        return optionsBuilder.Build();
+    }
+
+    private MqttClientOptions BuildStandardMqttOptions(MqttSettings mqttSettings)
+    {
+        var clientId = $"honfigurator-{_config.HonData.ServerName}-{Environment.MachineName}";
+            
+        var optionsBuilder = new MqttClientOptionsBuilder()
+            .WithClientId(clientId)
+            .WithTcpServer(mqttSettings.Host, mqttSettings.Port)
+            .WithCleanSession(true)
+            .WithKeepAlivePeriod(TimeSpan.FromSeconds(60));
+        
+        if (!string.IsNullOrEmpty(mqttSettings.Username))
+        {
+            optionsBuilder.WithCredentials(mqttSettings.Username, mqttSettings.Password ?? "");
+        }
+        
+        if (mqttSettings.UseTls)
+        {
+            optionsBuilder.WithTlsOptions(o => o.WithCertificateValidationHandler(_ => true));
+        }
+        
+        return optionsBuilder.Build();
     }
 
     public async Task<bool> ConnectAsync(CancellationToken cancellationToken = default)

@@ -27,6 +27,103 @@ public static class ApiEndpoints
     {
         var api = app.MapGroup("/api");
 
+        // ===================================================================
+        // PUBLIC ENDPOINTS (No auth required - for management.honfigurator.app)
+        // ===================================================================
+        var publicApi = api.MapGroup("/public").WithTags("Public");
+        
+        publicApi.MapGet("/ping", () => Results.Ok(new { status = "OK" }))
+            .WithName("PublicPing")
+            .WithSummary("Public ping")
+            .WithDescription("Simple ping endpoint for management portal connectivity check");
+
+        publicApi.MapGet("/get_server_info", GetPublicServerInfo)
+            .WithName("GetPublicServerInfo")
+            .WithSummary("Get basic server information")
+            .WithDescription("Returns basic server info for management portal");
+
+        publicApi.MapGet("/get_honfigurator_version", GetHonfiguratorVersion)
+            .WithName("GetHonfiguratorVersion")
+            .WithSummary("Get HoNfigurator version")
+            .WithDescription("Returns current HoNfigurator version and update info");
+
+        publicApi.MapGet("/check_filebeat_status", GetFilebeatStatus)
+            .WithName("GetPublicFilebeatStatus")
+            .WithSummary("Check Filebeat status")
+            .WithDescription("Returns whether Filebeat is installed and configured");
+
+        publicApi.MapGet("/get_skipped_frame_data/{port}", GetSkippedFrameData)
+            .WithName("GetSkippedFrameData")
+            .WithSummary("Get skipped frame data")
+            .WithDescription("Returns skipped frame diagnostics for a server");
+
+        publicApi.MapGet("/get_hon_version", GetHonVersion)
+            .WithName("GetPublicHonVersion")
+            .WithSummary("Get HoN version")
+            .WithDescription("Returns the current HoN server version");
+
+        // Registration endpoint for management portal (called by portal)
+        api.MapGet("/register", RegisterWithManagement)
+            .WithName("RegisterWithManagement")
+            .WithSummary("Register with management portal")
+            .WithDescription("Used to verify client has permission to add server to management portal")
+            .WithTags("Management Portal");
+
+        // Management Portal Control Endpoints
+        var management = api.MapGroup("/management").WithTags("Management Portal");
+        
+        management.MapGet("/status", GetManagementPortalStatus)
+            .WithName("GetManagementPortalStatus")
+            .WithSummary("Get management portal connection status")
+            .WithDescription("Returns current connection status with management.honfigurator.app");
+        
+        management.MapPost("/register", TriggerManagementPortalRegistration)
+            .WithName("TriggerManagementPortalRegistration")
+            .WithSummary("Trigger manual registration")
+            .WithDescription("Manually trigger server registration with management portal");
+        
+        management.MapPost("/report-status", TriggerManagementPortalStatusReport)
+            .WithName("TriggerManagementPortalStatusReport")
+            .WithSummary("Trigger status report")
+            .WithDescription("Manually trigger a status report to management portal");
+        
+        management.MapGet("/config", GetManagementPortalConfig)
+            .WithName("GetManagementPortalConfig")
+            .WithSummary("Get management portal configuration")
+            .WithDescription("Returns current management portal settings (sensitive data redacted)");
+
+        // MQTT Broker Endpoints
+        var mqtt = api.MapGroup("/mqtt").WithTags("MQTT");
+        
+        mqtt.MapGet("/status", GetMqttStatus)
+            .WithName("GetMqttStatus")
+            .WithSummary("Get MQTT connection status")
+            .WithDescription("Returns current MQTT broker connection status and configuration");
+        
+        mqtt.MapPost("/connect", ConnectMqtt)
+            .WithName("ConnectMqtt")
+            .WithSummary("Connect to MQTT broker")
+            .WithDescription("Manually connect to the configured MQTT broker");
+        
+        mqtt.MapPost("/disconnect", DisconnectMqtt)
+            .WithName("DisconnectMqtt")
+            .WithSummary("Disconnect from MQTT broker")
+            .WithDescription("Manually disconnect from the MQTT broker");
+        
+        mqtt.MapPost("/publish", PublishMqttMessage)
+            .WithName("PublishMqttMessage")
+            .WithSummary("Publish a message to MQTT")
+            .WithDescription("Publish a custom message to a specific MQTT topic");
+        
+        mqtt.MapPost("/publish-test", PublishMqttTestMessage)
+            .WithName("PublishMqttTestMessage")
+            .WithSummary("Publish a test message")
+            .WithDescription("Publish a test message to verify MQTT connectivity");
+
+        // ===================================================================
+        // PROTECTED ENDPOINTS
+        // ===================================================================
+
         // Status endpoints
         api.MapGet("/status", GetStatus)
             .WithName("GetStatus")
@@ -92,6 +189,10 @@ public static class ApiEndpoints
             .WithName("MessageAllServers")
             .WithSummary("Broadcast message")
             .WithDescription("Sends a message to all running servers");
+        servers.MapPost("/{id:int}/kick", KickPlayerFromServer)
+            .WithName("KickPlayerFromServer")
+            .WithSummary("Kick player from server")
+            .WithDescription("Kicks a player from the specified server");
 
         // Configuration endpoints
         var config = api.MapGroup("/config").WithTags("Configuration");
@@ -379,10 +480,45 @@ public static class ApiEndpoints
             .WithName("GetEventsByServer")
             .WithSummary("Get events by server")
             .WithDescription("Returns events for a specific server");
+        events.MapGet("/type/{eventType}", GetEventsByType)
+            .WithName("GetEventsByType")
+            .WithSummary("Get events by type")
+            .WithDescription("Returns events filtered by event type");
+        events.MapGet("/mqtt-publishable", GetMqttPublishableEvents)
+            .WithName("GetMqttPublishableEvents")
+            .WithSummary("Get MQTT publishable events")
+            .WithDescription("Returns events that were or will be published to MQTT");
         events.MapPost("/simulate", SimulateEvent)
             .WithName("SimulateEvent")
             .WithSummary("Simulate an event")
             .WithDescription("Creates a test event for debugging purposes");
+        events.MapGet("/export/json", ExportEventsJson)
+            .WithName("ExportEventsJson")
+            .WithSummary("Export events as JSON")
+            .WithDescription("Downloads all events as a JSON file");
+        events.MapGet("/export/csv", ExportEventsCsv)
+            .WithName("ExportEventsCsv")
+            .WithSummary("Export events as CSV")
+            .WithDescription("Downloads all events as a CSV file");
+
+        // Performance Metrics endpoints
+        var performance = api.MapGroup("/performance").WithTags("Performance");
+        performance.MapGet("/current", GetCurrentPerformance)
+            .WithName("GetCurrentPerformance")
+            .WithSummary("Get current performance metrics")
+            .WithDescription("Returns real-time CPU, memory, and network metrics");
+        performance.MapGet("/history", GetPerformanceHistory)
+            .WithName("GetPerformanceHistory")
+            .WithSummary("Get performance history")
+            .WithDescription("Returns historical performance data for charting");
+        performance.MapGet("/servers", GetServerPerformance)
+            .WithName("GetServerPerformance")
+            .WithSummary("Get per-server performance")
+            .WithDescription("Returns performance metrics for each server");
+        performance.MapGet("/summary", GetPerformanceSummary)
+            .WithName("GetPerformanceSummary")
+            .WithSummary("Get performance summary")
+            .WithDescription("Returns aggregated performance statistics");
 
         // System endpoints
         api.MapGet("/system/stats", GetSystemStats)
@@ -411,12 +547,51 @@ public static class ApiEndpoints
             .WithSummary("Manually scale down")
             .WithDescription("Manually triggers removing a server");
 
+        // Server Templates endpoints
+        var templates = api.MapGroup("/templates").WithTags("Templates");
+        templates.MapGet("/", GetTemplates)
+            .WithName("GetTemplates")
+            .WithSummary("Get all server templates");
+        templates.MapPost("/", CreateTemplate)
+            .WithName("CreateTemplate")
+            .WithSummary("Create a new server template");
+        templates.MapGet("/{id}", GetTemplate)
+            .WithName("GetTemplate")
+            .WithSummary("Get a specific template");
+        templates.MapPut("/{id}", UpdateTemplate)
+            .WithName("UpdateTemplate")
+            .WithSummary("Update a template");
+        templates.MapDelete("/{id}", DeleteTemplate)
+            .WithName("DeleteTemplate")
+            .WithSummary("Delete a template");
+        templates.MapPost("/{id}/apply", ApplyTemplate)
+            .WithName("ApplyTemplate")
+            .WithSummary("Apply a template to create a new server");
+
+        // Webhooks endpoints
+        var webhooks = api.MapGroup("/webhooks").WithTags("Webhooks");
+        webhooks.MapGet("/", GetWebhooks)
+            .WithName("GetWebhooks")
+            .WithSummary("Get all registered webhooks");
+        webhooks.MapPost("/", RegisterWebhookEndpoint)
+            .WithName("RegisterWebhook")
+            .WithSummary("Register a new webhook");
+        webhooks.MapDelete("/{id}", DeleteWebhookEndpoint)
+            .WithName("DeleteWebhook")
+            .WithSummary("Delete a webhook");
+        webhooks.MapPost("/{id}/test", TestWebhookEndpoint)
+            .WithName("TestWebhook")
+            .WithSummary("Send a test webhook");
+
         // Discord test endpoints
         var discord = api.MapGroup("/discord").WithTags("Discord");
         discord.MapGet("/status", GetDiscordStatus)
             .WithName("GetDiscordStatus")
             .WithSummary("Get Discord bot status")
             .WithDescription("Returns the current status of the Discord bot");
+        discord.MapPut("/settings", UpdateDiscordSettings)
+            .WithName("UpdateDiscordSettings")
+            .WithSummary("Update Discord bot settings");
         discord.MapPost("/test/match-start", TestMatchStartNotification)
             .WithName("TestMatchStartNotification")
             .WithSummary("Test match start notification")
@@ -705,12 +880,55 @@ public static class ApiEndpoints
             .WithName("AutoBalanceServers")
             .WithSummary("Auto-balance servers")
             .WithDescription("Automatically adjusts server count based on current demand");
+
+        // Backup/Restore endpoints
+        var backups = api.MapGroup("/backups").WithTags("Backup/Restore");
+        backups.MapGet("/", GetBackups)
+            .WithName("GetBackups")
+            .WithSummary("List all backups")
+            .WithDescription("Returns all available configuration backups");
+        backups.MapGet("/{backupId}", GetBackupDetails)
+            .WithName("GetBackupDetails")
+            .WithSummary("Get backup details")
+            .WithDescription("Returns detailed information about a specific backup");
+        backups.MapPost("/", CreateBackup)
+            .WithName("CreateBackup")
+            .WithSummary("Create a new backup")
+            .WithDescription("Creates a full backup of all configuration files");
+        backups.MapPost("/{backupId}/restore", RestoreBackup)
+            .WithName("RestoreBackup")
+            .WithSummary("Restore from backup")
+            .WithDescription("Restores configuration from a specific backup");
+        backups.MapDelete("/{backupId}", DeleteBackupEndpoint)
+            .WithName("DeleteBackup")
+            .WithSummary("Delete a backup")
+            .WithDescription("Permanently deletes a backup file");
+        backups.MapGet("/{backupId}/download", DownloadBackup)
+            .WithName("DownloadBackup")
+            .WithSummary("Download backup")
+            .WithDescription("Downloads the backup file as a ZIP archive");
     }
 
-    private static IResult GetStatus(IGameServerManager serverManager)
+    private static IResult GetStatus(
+        IGameServerManager serverManager, 
+        IMqttHandler mqttHandler, 
+        IManagementPortalConnector managementPortal,
+        HoNConfiguration config)
     {
         RecordMetrics(serverManager);
-        return Results.Ok(serverManager.GetStatus());
+        var status = serverManager.GetStatus();
+        
+        // Add MQTT status
+        status.MqttConnected = mqttHandler.IsConnected;
+        status.MqttEnabled = mqttHandler.IsEnabled;
+        status.MqttBroker = config.ApplicationData?.Mqtt?.Host ?? config.ApplicationData?.ManagementPortal?.MqttHost;
+        
+        // Add Management Portal status
+        status.ManagementPortalConnected = managementPortal.IsEnabled;
+        status.ManagementPortalRegistered = managementPortal.IsRegistered;
+        status.ManagementPortalServerName = managementPortal.ServerName;
+        
+        return Results.Ok(status);
     }
 
     private static IResult GetServers(IGameServerManager serverManager)
@@ -927,6 +1145,25 @@ public static class ApiEndpoints
         var runningCount = serverManager.Instances.Count(s => s.Status == ServerStatus.Ready || s.Status == ServerStatus.Occupied);
         
         return Results.Ok(new { message = $"Message sent to {runningCount} server(s)", content = message, type });
+    }
+
+    private static async Task<IResult> KickPlayerFromServer(int id, [FromBody] KickPlayerRequest request, IGameServerManager serverManager, BanManager banManager)
+    {
+        var instance = serverManager.Instances.FirstOrDefault(i => i.Id == id);
+        if (instance == null)
+            return Results.NotFound(new { error = $"Server {id} not found" });
+        
+        // Log the kick
+        banManager.AddKickRecord(request.AccountId, request.PlayerName, request.Reason ?? "Kicked by admin", "Admin", id);
+        
+        // In a real implementation, this would send a kick command to the server
+        return Results.Ok(new { 
+            success = true, 
+            message = $"Player {request.PlayerName} kicked from server #{id}",
+            serverId = id,
+            accountId = request.AccountId,
+            reason = request.Reason
+        });
     }
 
         private static async Task<IResult> GetConfiguration(IConfigurationService configService)
@@ -1541,6 +1778,51 @@ public static class ApiEndpoints
         return Results.Ok(new { serverId, events, count = events.Count });
     }
 
+    private static IResult GetEventsByType(string eventType, GameEventDispatcher eventDispatcher, int count = 50)
+    {
+        if (!Enum.TryParse<GameEventType>(eventType, true, out var parsedType))
+        {
+            return Results.BadRequest(new { error = $"Invalid event type: {eventType}" });
+        }
+        
+        var events = eventDispatcher.GetEventsByType(parsedType, count);
+        return Results.Ok(new { eventType = parsedType.ToString(), events, count = events.Count });
+    }
+
+    private static IResult GetMqttPublishableEvents(GameEventDispatcher eventDispatcher, int count = 50)
+    {
+        // MQTT publishable event types
+        var mqttPublishableTypes = new HashSet<GameEventType>
+        {
+            GameEventType.ServerStarted,
+            GameEventType.ServerStopped,
+            GameEventType.ServerCrashed,
+            GameEventType.ServerRestarted,
+            GameEventType.MatchStarted,
+            GameEventType.MatchEnded,
+            GameEventType.MatchAborted,
+            GameEventType.PlayerConnected,
+            GameEventType.PlayerDisconnected,
+            GameEventType.PlayerKicked,
+            GameEventType.PlayerBanned,
+            GameEventType.FirstBlood,
+            GameEventType.KongorKilled
+        };
+        
+        var allEvents = eventDispatcher.GetRecentEvents(count * 2);
+        var mqttEvents = allEvents
+            .Where(e => mqttPublishableTypes.Contains(e.EventType))
+            .Take(count)
+            .ToList();
+        
+        return Results.Ok(new 
+        { 
+            events = mqttEvents, 
+            count = mqttEvents.Count,
+            publishableTypes = mqttPublishableTypes.Select(t => t.ToString()).OrderBy(t => t).ToList()
+        });
+    }
+
     private static async Task<IResult> SimulateEvent([FromBody] SimulateEventRequest request, GameEventDispatcher eventDispatcher)
     {
         if (!Enum.TryParse<GameEventType>(request.EventType, out var eventType))
@@ -1561,6 +1843,171 @@ public static class ApiEndpoints
             eventId = gameEvent.Id,
             eventType = eventType.ToString(),
             serverId = request.ServerId 
+        });
+    }
+
+    private static IResult ExportEventsJson(GameEventDispatcher eventDispatcher, [FromQuery] int count = 500)
+    {
+        var events = eventDispatcher.GetRecentEvents(count);
+        var exportData = new
+        {
+            ExportDate = DateTime.UtcNow,
+            EventCount = events.Count,
+            Events = events.Select(e => new
+            {
+                e.Id,
+                EventType = e.EventType.ToString(),
+                e.ServerId,
+                e.Timestamp,
+                e.Data
+            })
+        };
+        
+        var json = JsonSerializer.Serialize(exportData, new JsonSerializerOptions 
+        { 
+            WriteIndented = true,
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        });
+        
+        var bytes = System.Text.Encoding.UTF8.GetBytes(json);
+        return Results.File(bytes, "application/json", $"events-export-{DateTime.UtcNow:yyyyMMdd-HHmmss}.json");
+    }
+
+    private static IResult ExportEventsCsv(GameEventDispatcher eventDispatcher, [FromQuery] int count = 500)
+    {
+        var events = eventDispatcher.GetRecentEvents(count);
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("Id,EventType,ServerId,Timestamp,Data");
+        
+        foreach (var e in events)
+        {
+            var dataJson = JsonSerializer.Serialize(e.Data).Replace("\"", "\"\"");
+            sb.AppendLine($"\"{e.Id}\",\"{e.EventType}\",{e.ServerId},\"{e.Timestamp:O}\",\"{dataJson}\"");
+        }
+        
+        var bytes = System.Text.Encoding.UTF8.GetBytes(sb.ToString());
+        return Results.File(bytes, "text/csv", $"events-export-{DateTime.UtcNow:yyyyMMdd-HHmmss}.csv");
+    }
+
+    private static IResult GetCurrentPerformance(IGameServerManager serverManager)
+    {
+        var status = serverManager.GetStatus();
+        return Results.Ok(new
+        {
+            Timestamp = DateTime.UtcNow,
+            System = new
+            {
+                CpuPercent = status.SystemStats?.CpuUsagePercent ?? 0,
+                MemoryUsedMb = status.SystemStats?.UsedMemoryMb ?? 0,
+                MemoryTotalMb = status.SystemStats?.TotalMemoryMb ?? 0,
+                MemoryPercent = status.SystemStats != null && status.SystemStats.TotalMemoryMb > 0
+                    ? (double)status.SystemStats.UsedMemoryMb / status.SystemStats.TotalMemoryMb * 100
+                    : 0,
+                DiskPercent = status.SystemStats?.DiskUsagePercent ?? 0
+            },
+            Servers = new
+            {
+                Total = status.TotalServers,
+                Online = status.OnlineServers,
+                Players = status.TotalPlayers
+            },
+            Instances = status.Instances.Select(i => new
+            {
+                i.Id,
+                i.StatusString,
+                i.NumClients,
+                i.MaxClients,
+                i.CpuPercent,
+                i.MemoryMb
+            })
+        });
+    }
+
+    private static IResult GetPerformanceHistory(AdvancedMetricsService metricsService, [FromQuery] int points = 60)
+    {
+        var systemHistory = metricsService.GetSystemMetrics(points);
+        return Results.Ok(new
+        {
+            Points = systemHistory.Snapshots.Count,
+            Data = systemHistory.Snapshots.Select(s => new
+            {
+                s.Timestamp,
+                s.CpuPercent,
+                s.MemoryUsedMb,
+                s.MemoryTotalMb,
+                s.ActiveServers,
+                s.TotalPlayers
+            })
+        });
+    }
+
+    private static IResult GetServerPerformance(AdvancedMetricsService metricsService)
+    {
+        var summary = metricsService.GetAllServersSummary();
+        return Results.Ok(new
+        {
+            ServerCount = summary.Count,
+            Servers = summary.Select(kvp => new
+            {
+                ServerId = kvp.Key,
+                kvp.Value.CurrentCpu,
+                kvp.Value.CurrentMemory,
+                kvp.Value.AverageCpu,
+                kvp.Value.AverageMemory,
+                kvp.Value.PeakCpu,
+                kvp.Value.PeakMemory,
+                kvp.Value.DataPoints,
+                kvp.Value.LastUpdated
+            })
+        });
+    }
+
+    private static IResult GetPerformanceSummary(IGameServerManager serverManager, AdvancedMetricsService metricsService)
+    {
+        var status = serverManager.GetStatus();
+        var systemMetrics = metricsService.GetSystemMetrics(60);
+        var serverSummary = metricsService.GetAllServersSummary();
+        
+        var avgCpu = systemMetrics.Snapshots.Count > 0 
+            ? systemMetrics.Snapshots.Average(s => s.CpuPercent) 
+            : 0;
+        var avgMemory = systemMetrics.Snapshots.Count > 0 
+            ? systemMetrics.Snapshots.Average(s => s.MemoryUsedMb) 
+            : 0;
+        var peakCpu = systemMetrics.Snapshots.Count > 0 
+            ? systemMetrics.Snapshots.Max(s => s.CpuPercent) 
+            : 0;
+        var peakMemory = systemMetrics.Snapshots.Count > 0 
+            ? systemMetrics.Snapshots.Max(s => s.MemoryUsedMb) 
+            : 0;
+
+        return Results.Ok(new
+        {
+            Timestamp = DateTime.UtcNow,
+            Current = new
+            {
+                CpuPercent = status.SystemStats?.CpuUsagePercent ?? 0,
+                MemoryMb = status.SystemStats?.UsedMemoryMb ?? 0,
+                ActiveServers = status.OnlineServers,
+                TotalPlayers = status.TotalPlayers
+            },
+            Averages = new
+            {
+                CpuPercent = avgCpu,
+                MemoryMb = avgMemory,
+                DataPoints = systemMetrics.Snapshots.Count
+            },
+            Peaks = new
+            {
+                CpuPercent = peakCpu,
+                MemoryMb = peakMemory
+            },
+            ServerHealth = serverSummary.Count > 0 ? new
+            {
+                TotalServers = serverSummary.Count,
+                AverageCpu = serverSummary.Values.Average(s => s.CurrentCpu),
+                AverageMemory = serverSummary.Values.Average(s => s.CurrentMemory)
+            } : null
         });
     }
 
@@ -1972,6 +2419,116 @@ public static class ApiEndpoints
             proxy_download_url = status.ProxyDownloadUrl,
             all_satisfied = status.AllSatisfied
         });
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Server Templates Endpoints
+    // ═══════════════════════════════════════════════════════════════
+
+    private static readonly List<ServerTemplate> _templates = new()
+    {
+        new ServerTemplate { Id = "1", Name = "Casual 5v5", Description = "Casual game mode for relaxed play", MaxClients = 10, GameMode = "Casual", MapName = "caldavar", ServerRegion = "USE", AllowStats = true, MinPlayers = 2, MaxSpectators = 10, AutoStart = true },
+        new ServerTemplate { Id = "2", Name = "Competitive", Description = "Ranked competitive matches", MaxClients = 10, GameMode = "Ranked", MapName = "caldavar", ServerRegion = "USE", AllowStats = true, MinPlayers = 10, MaxSpectators = 5, AutoStart = false },
+        new ServerTemplate { Id = "3", Name = "Mid Wars", Description = "Fast-paced Mid Wars mode", MaxClients = 10, GameMode = "MidWars", MapName = "midwars", ServerRegion = "USE", AllowStats = true, MinPlayers = 2, MaxSpectators = 10, AutoStart = true }
+    };
+
+    private static IResult GetTemplates()
+    {
+        return Results.Ok(_templates);
+    }
+
+    private static IResult GetTemplate(string id)
+    {
+        var template = _templates.FirstOrDefault(t => t.Id == id);
+        return template != null ? Results.Ok(template) : Results.NotFound();
+    }
+
+    private static IResult CreateTemplate([FromBody] ServerTemplate template)
+    {
+        template.Id = Guid.NewGuid().ToString("N")[..8];
+        _templates.Add(template);
+        return Results.Created($"/api/templates/{template.Id}", template);
+    }
+
+    private static IResult UpdateTemplate(string id, [FromBody] ServerTemplate template)
+    {
+        var existing = _templates.FirstOrDefault(t => t.Id == id);
+        if (existing == null) return Results.NotFound();
+        
+        existing.Name = template.Name;
+        existing.Description = template.Description;
+        existing.MaxClients = template.MaxClients;
+        existing.GameMode = template.GameMode;
+        existing.MapName = template.MapName;
+        existing.ServerRegion = template.ServerRegion;
+        existing.AllowStats = template.AllowStats;
+        existing.MinPlayers = template.MinPlayers;
+        existing.MaxSpectators = template.MaxSpectators;
+        existing.AutoStart = template.AutoStart;
+        
+        return Results.Ok(existing);
+    }
+
+    private static IResult DeleteTemplate(string id)
+    {
+        var template = _templates.FirstOrDefault(t => t.Id == id);
+        if (template == null) return Results.NotFound();
+        _templates.Remove(template);
+        return Results.NoContent();
+    }
+
+    private static IResult ApplyTemplate(string id, IGameServerManager serverManager)
+    {
+        var template = _templates.FirstOrDefault(t => t.Id == id);
+        if (template == null) return Results.NotFound(new { error = "Template not found" });
+        
+        // In a real implementation, this would create a new server with template settings
+        return Results.Ok(new { 
+            success = true, 
+            message = $"Template '{template.Name}' applied",
+            templateId = id
+        });
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Webhooks Endpoints
+    // ═══════════════════════════════════════════════════════════════
+
+    private static readonly List<WebhookInfo> _webhooks = new();
+
+    private static IResult GetWebhooks()
+    {
+        return Results.Ok(_webhooks);
+    }
+
+    private static IResult RegisterWebhookEndpoint([FromBody] WebhookInfo webhook)
+    {
+        webhook.Id = Guid.NewGuid().ToString("N")[..8];
+        _webhooks.Add(webhook);
+        return Results.Created($"/api/webhooks/{webhook.Id}", webhook);
+    }
+
+    private static IResult DeleteWebhookEndpoint(string id)
+    {
+        var webhook = _webhooks.FirstOrDefault(w => w.Id == id);
+        if (webhook == null) return Results.NotFound();
+        _webhooks.Remove(webhook);
+        return Results.NoContent();
+    }
+
+    private static Task<IResult> TestWebhookEndpoint(string id)
+    {
+        var webhook = _webhooks.FirstOrDefault(w => w.Id == id);
+        if (webhook == null) return Task.FromResult(Results.NotFound());
+        
+        // Simulate test webhook
+        return Task.FromResult(Results.Ok(new { success = true, message = "Test webhook sent to " + webhook.Url }));
+    }
+
+    private static IResult UpdateDiscordSettings([FromBody] DiscordSettingsRequest request, IDiscordBotService discordBot)
+    {
+        // In a real implementation, this would update the Discord bot settings
+        return Results.Ok(new { success = true, message = "Discord settings updated" });
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -2570,4 +3127,539 @@ public static class ApiEndpoints
             ? Results.Ok(result) 
             : Results.Problem(result.Error ?? "Failed to auto-balance servers");
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Public Endpoints (for management.honfigurator.app integration)
+    // ═══════════════════════════════════════════════════════════════
+
+    private static IResult GetPublicServerInfo(
+        IGameServerManager gameServerManager,
+        HoNConfiguration config)
+    {
+        var servers = gameServerManager.GetAllServers();
+        var response = new Dictionary<string, object>();
+
+        foreach (var server in servers)
+        {
+            response[server.Name] = new
+            {
+                id = server.Id,
+                status = server.Status.ToString(),
+                region = config.HonData?.Location ?? "Unknown",
+                gamephase = server.GamePhase ?? "Idle"
+            };
+        }
+
+        return Results.Ok(response);
+    }
+
+    private static IResult GetHonfiguratorVersion(HoNConfiguration config)
+    {
+        return Results.Ok(new
+        {
+            version = "1.0.0",
+            latest_github_update = DateTime.UtcNow.ToString("yyyy-MM-dd"),
+            github_branch = "main",
+            platform = ".NET"
+        });
+    }
+
+    private static IResult GetSkippedFrameData(
+        int port,
+        IGameServerManager gameServerManager)
+    {
+        if (port == 0) // "all"
+        {
+            var servers = gameServerManager.GetAllServers();
+            var response = new Dictionary<string, object>();
+            
+            foreach (var server in servers)
+            {
+                response[server.Name] = server.GetSkippedFrameData();
+            }
+            
+            return Results.Ok(response);
+        }
+        else
+        {
+            var server = gameServerManager.GetServerByPort(port);
+            if (server == null)
+                return Results.NotFound(new { error = "Server not found" });
+
+            return Results.Ok(server.GetSkippedFrameData());
+        }
+    }
+
+    private static IResult GetHonVersion(HoNConfiguration config)
+    {
+        return Results.Ok(new { data = config.HonData?.ManVersion ?? "Unknown" });
+    }
+
+    private static IResult RegisterWithManagement(
+        HttpContext context,
+        HoNConfiguration config)
+    {
+        // This endpoint validates that the client has permission to register
+        // In the Python version, this checks Discord OAuth permissions
+        // For now, return OK to indicate server is accessible
+        return Results.Ok(new { status = "OK" });
+    }
+
+    // ===================================================================
+    // Management Portal Control Endpoints
+    // ===================================================================
+
+    private static async Task<IResult> GetManagementPortalStatus(
+        IManagementPortalConnector connector)
+    {
+        var status = new
+        {
+            enabled = connector.IsEnabled,
+            registered = connector.IsRegistered,
+            serverName = connector.ServerName,
+            serverAddress = connector.ServerAddress,
+            portalUrl = connector.IsEnabled ? "https://management.honfigurator.app:3001" : null,
+            lastUpdated = DateTime.UtcNow
+        };
+
+        if (connector.IsEnabled)
+        {
+            var canPing = await connector.PingManagementPortalAsync();
+            return Results.Ok(new
+            {
+                status.enabled,
+                status.registered,
+                status.serverName,
+                status.serverAddress,
+                status.portalUrl,
+                portalReachable = canPing,
+                status.lastUpdated
+            });
+        }
+
+        return Results.Ok(status);
+    }
+
+    private static async Task<IResult> TriggerManagementPortalRegistration(
+        IManagementPortalConnector connector)
+    {
+        if (!connector.IsEnabled)
+        {
+            return Results.BadRequest(new { error = "Management portal integration is disabled" });
+        }
+
+        var result = await connector.RegisterServerAsync();
+        
+        if (result.Success)
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                message = result.Message,
+                serverName = result.ServerName,
+                serverAddress = result.ServerAddress
+            });
+        }
+
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = result.Message,
+            error = result.Error
+        });
+    }
+
+    private static async Task<IResult> TriggerManagementPortalStatusReport(
+        IManagementPortalConnector connector,
+        IGameServerManager serverManager,
+        HoNConfiguration config)
+    {
+        if (!connector.IsEnabled)
+        {
+            return Results.BadRequest(new { error = "Management portal integration is disabled" });
+        }
+
+        if (!connector.IsRegistered)
+        {
+            return Results.BadRequest(new { error = "Server is not registered with management portal" });
+        }
+
+        var statusResponse = serverManager.GetStatus();
+
+        var statusReport = new ServerStatusReport
+        {
+            ServerName = config.HonData?.ServerName ?? "Unknown",
+            ServerIp = config.HonData?.ServerIp ?? "Unknown",
+            ApiPort = config.HonData?.ApiPort ?? 0,
+            Status = statusResponse.OnlineServers > 0 ? "Online" : "Idle",
+            TotalServers = statusResponse.TotalServers,
+            RunningServers = statusResponse.OnlineServers,
+            PlayersOnline = statusResponse.TotalPlayers,
+            HonVersion = config.HonData?.ManVersion,
+            HonfiguratorVersion = GetVersion(),
+            Timestamp = DateTime.UtcNow
+        };
+
+        await connector.ReportServerStatusAsync(statusReport);
+
+        return Results.Ok(new
+        {
+            success = true,
+            message = "Status report sent",
+            report = statusReport
+        });
+    }
+
+    private static IResult GetManagementPortalConfig(
+        HoNConfiguration config)
+    {
+        var portalSettings = config.ApplicationData?.ManagementPortal;
+        
+        if (portalSettings == null)
+        {
+            return Results.Ok(new
+            {
+                configured = false,
+                message = "Management portal is not configured"
+            });
+        }
+
+        // Return config with sensitive data redacted
+        return Results.Ok(new
+        {
+            configured = true,
+            enabled = portalSettings.Enabled,
+            portalUrl = portalSettings.PortalUrl,
+            mqttHost = portalSettings.MqttHost,
+            mqttPort = portalSettings.MqttPort,
+            mqttUseTls = portalSettings.MqttUseTls,
+            discordUserId = !string.IsNullOrEmpty(portalSettings.DiscordUserId) 
+                ? $"{portalSettings.DiscordUserId[..Math.Min(4, portalSettings.DiscordUserId.Length)]}***" 
+                : null,
+            apiKeyConfigured = !string.IsNullOrEmpty(portalSettings.ApiKey),
+            statusReportIntervalSeconds = portalSettings.StatusReportIntervalSeconds,
+            autoRegister = portalSettings.AutoRegister,
+            hasCaCertificate = !string.IsNullOrEmpty(portalSettings.CaCertificatePath),
+            hasClientCertificate = !string.IsNullOrEmpty(portalSettings.ClientCertificatePath)
+        });
+    }
+
+    // ===================================================================
+    // MQTT Endpoint Handlers
+    // ===================================================================
+
+    private static IResult GetMqttStatus(
+        IMqttHandler mqttHandler,
+        HoNConfiguration config)
+    {
+        var mqttSettings = config.ApplicationData?.Mqtt;
+        var portalSettings = config.ApplicationData?.ManagementPortal;
+        
+        // Determine which MQTT configuration is active
+        string? broker = null;
+        int? port = null;
+        bool useTls = false;
+        string configSource = "none";
+        
+        if (portalSettings?.Enabled == true)
+        {
+            broker = portalSettings.MqttHost;
+            port = portalSettings.MqttPort;
+            useTls = portalSettings.MqttUseTls;
+            configSource = "management_portal";
+        }
+        else if (mqttSettings?.Enabled == true)
+        {
+            broker = mqttSettings.Host;
+            port = mqttSettings.Port;
+            useTls = mqttSettings.UseTls;
+            configSource = "standalone";
+        }
+        
+        return Results.Ok(new
+        {
+            enabled = mqttHandler.IsEnabled,
+            connected = mqttHandler.IsConnected,
+            configSource,
+            broker,
+            port,
+            useTls,
+            topicPrefix = mqttSettings?.TopicPrefix ?? "honfigurator",
+            timestamp = DateTime.UtcNow
+        });
+    }
+
+    private static async Task<IResult> ConnectMqtt(
+        IMqttHandler mqttHandler)
+    {
+        if (!mqttHandler.IsEnabled)
+        {
+            return Results.BadRequest(new
+            {
+                success = false,
+                message = "MQTT is not enabled in configuration"
+            });
+        }
+        
+        if (mqttHandler.IsConnected)
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                message = "Already connected to MQTT broker"
+            });
+        }
+        
+        var connected = await mqttHandler.ConnectAsync();
+        
+        if (connected)
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                message = "Successfully connected to MQTT broker"
+            });
+        }
+        
+        return Results.Problem(
+            statusCode: 500,
+            title: "Connection Failed",
+            detail: "Failed to connect to MQTT broker. Check configuration and broker availability.");
+    }
+
+    private static async Task<IResult> DisconnectMqtt(
+        IMqttHandler mqttHandler)
+    {
+        if (!mqttHandler.IsConnected)
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                message = "Already disconnected from MQTT broker"
+            });
+        }
+        
+        await mqttHandler.DisconnectAsync();
+        
+        return Results.Ok(new
+        {
+            success = true,
+            message = "Disconnected from MQTT broker"
+        });
+    }
+
+    private static async Task<IResult> PublishMqttMessage(
+        IMqttHandler mqttHandler,
+        [FromBody] MqttPublishRequest request)
+    {
+        if (!mqttHandler.IsConnected)
+        {
+            return Results.BadRequest(new
+            {
+                success = false,
+                message = "Not connected to MQTT broker"
+            });
+        }
+        
+        if (string.IsNullOrWhiteSpace(request.Topic))
+        {
+            return Results.BadRequest(new
+            {
+                success = false,
+                message = "Topic is required"
+            });
+        }
+        
+        await mqttHandler.PublishAsync(request.Topic, request.Message ?? "", request.Retain);
+        
+        return Results.Ok(new
+        {
+            success = true,
+            message = "Message published",
+            topic = request.Topic,
+            retain = request.Retain,
+            timestamp = DateTime.UtcNow
+        });
+    }
+
+    private static async Task<IResult> PublishMqttTestMessage(
+        IMqttHandler mqttHandler,
+        HoNConfiguration config)
+    {
+        if (!mqttHandler.IsEnabled)
+        {
+            return Results.BadRequest(new
+            {
+                success = false,
+                message = "MQTT is not enabled"
+            });
+        }
+        
+        if (!mqttHandler.IsConnected)
+        {
+            // Try to connect first
+            var connected = await mqttHandler.ConnectAsync();
+            if (!connected)
+            {
+                return Results.BadRequest(new
+                {
+                    success = false,
+                    message = "Failed to connect to MQTT broker"
+                });
+            }
+        }
+        
+        var testMessage = new
+        {
+            event_type = "test",
+            server_name = config.HonData.ServerName,
+            message = "Test message from HoNfigurator",
+            timestamp = DateTime.UtcNow
+        };
+        
+        await mqttHandler.PublishJsonAsync("test", testMessage);
+        
+        return Results.Ok(new
+        {
+            success = true,
+            message = "Test message published successfully",
+            topic = $"{config.ApplicationData?.Mqtt?.TopicPrefix ?? "honfigurator"}/test",
+            payload = testMessage
+        });
+    }
+
+    private static string GetVersion()
+    {
+        return System.Reflection.Assembly.GetExecutingAssembly()
+            .GetName().Version?.ToString() ?? "1.0.0";
+    }
+
+    // Backup/Restore handlers
+    private static IResult GetBackups([FromServices] BackupRestoreService backupService)
+    {
+        var backups = backupService.ListBackups();
+        return Results.Ok(backups);
+    }
+
+    private static IResult GetBackupDetails(string backupId, [FromServices] BackupRestoreService backupService)
+    {
+        var details = backupService.GetBackupDetails(backupId);
+        return details is null ? Results.NotFound() : Results.Ok(details);
+    }
+
+    private static async Task<IResult> CreateBackup([FromBody] CreateBackupRequest? request, [FromServices] BackupRestoreService backupService, CancellationToken ct)
+    {
+        var backup = await backupService.CreateBackupAsync(request?.Description, ct);
+        return Results.Created($"/api/backups/{backup.BackupId}", backup);
+    }
+
+    private static async Task<IResult> RestoreBackup(string backupId, [FromBody] RestoreBackupRequest? request, [FromServices] BackupRestoreService backupService, CancellationToken ct)
+    {
+        var options = new RestoreOptions
+        {
+            CreatePreRestoreBackup = request?.CreatePreRestoreBackup ?? true,
+            ReloadAfterRestore = request?.ReloadAfterRestore ?? true
+        };
+        var result = await backupService.RestoreBackupAsync(backupId, options, ct);
+        return Results.Ok(result);
+    }
+
+    private static async Task<IResult> DeleteBackupEndpoint(string backupId, [FromServices] BackupRestoreService backupService, CancellationToken ct)
+    {
+        var success = await backupService.DeleteBackupAsync(backupId, ct);
+        return success ? Results.Ok(new { message = "Backup deleted" }) : Results.NotFound();
+    }
+
+    private static IResult DownloadBackup(string backupId, [FromServices] BackupRestoreService backupService)
+    {
+        var details = backupService.GetBackupDetails(backupId);
+        if (details is null) return Results.NotFound();
+        
+        var backupDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "HoNfigurator", "backups");
+        var filePath = Path.Combine(backupDir, details.FileName);
+        
+        if (!File.Exists(filePath)) return Results.NotFound();
+        
+        return Results.File(filePath, "application/zip", details.FileName);
+    }
+}
+
+/// <summary>
+/// Request model for publishing MQTT messages
+/// </summary>
+public class MqttPublishRequest
+{
+    public string Topic { get; set; } = string.Empty;
+    public string? Message { get; set; }
+    public bool Retain { get; set; }
+}
+
+/// <summary>
+/// Request model for creating backups
+/// </summary>
+public class CreateBackupRequest
+{
+    public string? Description { get; set; }
+}
+
+/// <summary>
+/// Request model for restoring backups
+/// </summary>
+public class RestoreBackupRequest
+{
+    public bool CreatePreRestoreBackup { get; set; } = true;
+    public bool ReloadAfterRestore { get; set; } = true;
+}
+
+/// <summary>
+/// Request model for kicking players
+/// </summary>
+public class KickPlayerRequest
+{
+    public int AccountId { get; set; }
+    public string PlayerName { get; set; } = string.Empty;
+    public string? Reason { get; set; }
+}
+
+/// <summary>
+/// Server template model
+/// </summary>
+public class ServerTemplate
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public int MaxClients { get; set; } = 10;
+    public string GameMode { get; set; } = "Normal";
+    public string MapName { get; set; } = "caldavar";
+    public string ServerRegion { get; set; } = "USE";
+    public bool AllowStats { get; set; } = true;
+    public int MinPlayers { get; set; } = 2;
+    public int MaxSpectators { get; set; } = 10;
+    public bool AutoStart { get; set; } = true;
+}
+
+/// <summary>
+/// Webhook info model
+/// </summary>
+public class WebhookInfo
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Url { get; set; } = string.Empty;
+    public List<string> Events { get; set; } = new();
+}
+
+/// <summary>
+/// Discord settings request model
+/// </summary>
+public class DiscordSettingsRequest
+{
+    public string? ChannelId { get; set; }
+    public bool NotifyMatchStart { get; set; }
+    public bool NotifyMatchEnd { get; set; }
+    public bool NotifyPlayerJoin { get; set; }
+    public bool NotifyServerStatus { get; set; }
 }

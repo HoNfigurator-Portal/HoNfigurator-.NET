@@ -229,3 +229,113 @@ public class IpValidationResultRecordTests
         result.IsReachable.Should().BeTrue();
     }
 }
+
+/// <summary>
+/// Tests for Management Portal Health Check
+/// </summary>
+public class ManagementPortalHealthCheckTests
+{
+    private readonly Mock<ILogger<HealthCheckManager>> _loggerMock;
+
+    public ManagementPortalHealthCheckTests()
+    {
+        _loggerMock = new Mock<ILogger<HealthCheckManager>>();
+    }
+
+    [Fact]
+    public async Task CheckManagementPortalAsync_ShouldReturnDisabled_WhenNotConfigured()
+    {
+        // Arrange - config without management portal
+        var config = new HoNConfiguration
+        {
+            HonData = new HoNData { ServerName = "Test" },
+            ApplicationData = null
+        };
+        var manager = new HealthCheckManager(_loggerMock.Object, config);
+
+        // Act
+        var result = await manager.CheckManagementPortalAsync();
+
+        // Assert
+        result.Should().NotBeNull();
+        result.Name.Should().Be("ManagementPortal");
+        result.Status.Should().Be("Disabled");
+        result.IsHealthy.Should().BeTrue(); // Disabled is not unhealthy
+        result.Data.Should().ContainKey("Enabled");
+        result.Data["Enabled"].Should().Be(false);
+    }
+
+    [Fact]
+    public async Task CheckManagementPortalAsync_ShouldReturnDisabled_WhenExplicitlyDisabled()
+    {
+        // Arrange
+        var config = new HoNConfiguration
+        {
+            HonData = new HoNData { ServerName = "Test" },
+            ApplicationData = new ApplicationData
+            {
+                ManagementPortal = new ManagementPortalSettings
+                {
+                    Enabled = false
+                }
+            }
+        };
+        var manager = new HealthCheckManager(_loggerMock.Object, config);
+
+        // Act
+        var result = await manager.CheckManagementPortalAsync();
+
+        // Assert
+        result.Should().NotBeNull();
+        result.Name.Should().Be("ManagementPortal");
+        result.Status.Should().Be("Disabled");
+        result.IsHealthy.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task CheckManagementPortalAsync_ShouldIncludeEnabled_WhenEnabled()
+    {
+        // Arrange
+        var config = new HoNConfiguration
+        {
+            HonData = new HoNData { ServerName = "Test" },
+            ApplicationData = new ApplicationData
+            {
+                ManagementPortal = new ManagementPortalSettings
+                {
+                    Enabled = true,
+                    PortalUrl = "https://test.portal.com:3001"
+                }
+            }
+        };
+        var manager = new HealthCheckManager(_loggerMock.Object, config);
+
+        // Act
+        var result = await manager.CheckManagementPortalAsync();
+
+        // Assert
+        result.Should().NotBeNull();
+        result.Name.Should().Be("ManagementPortal");
+        result.Data.Should().ContainKey("Enabled");
+        result.Data["Enabled"].Should().Be(true);
+        // Note: PortalUrl is only included on successful connection
+        // When connection fails, it includes "Error" key instead
+    }
+
+    [Fact]
+    public async Task RunAllChecksAsync_ShouldIncludeManagementPortalCheck()
+    {
+        // Arrange
+        var config = new HoNConfiguration
+        {
+            HonData = new HoNData { ServerName = "Test" }
+        };
+        var manager = new HealthCheckManager(_loggerMock.Object, config);
+
+        // Act
+        var results = await manager.RunAllChecksAsync();
+
+        // Assert
+        results.Should().ContainKey("ManagementPortal");
+    }
+}

@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Example configuration file for HoNfigurator - Copy this to 'config.json' and fill in your values",
+  
+  "hon_data": {
+    "server_name": "MY_SERVER_NAME",
+    "server_ip": "YOUR_PUBLIC_IP",
+    "api_port": 5050,
+    "man_version": "4.10.1",
+    "hon_home_dir": "C:\\Games\\HoN\\game",
+    "server_location": "TH",
+    "total_servers": 3,
+    "starting_server_port": 11235,
+    "starting_voice_port": 12345,
+    "cpu_affinity": [],
+    "chat_port": 11031,
+    "enable_proxy": true
+  },
+  
+  "master_server": {
+    "host": "masterserver.naeu.honfigurator.app",
+    "port": 11031,
+    "login": "YOUR_LOGIN",
+    "password": "YOUR_PASSWORD"
+  },
+  
+  "chat_server": {
+    "host": "chatserver.naeu.honfigurator.app",
+    "port": 11031
+  },
+  
+  "application_data": {
+    "auto_start": true,
+    "auto_restart": true,
+    "auto_update": false,
+    "check_for_updates_on_startup": true,
+    "log_level": "Information",
+    "metrics_enabled": true,
+    "metrics_retention_hours": 24,
+    
+    "management_portal": {
+      "enabled": false,
+      "portal_url": "https://management.honfigurator.app:3001",
+      "mqtt_host": "mqtt.honfigurator.app",
+      "mqtt_port": 8883,
+      "mqtt_use_tls": true,
+      "discord_user_id": "YOUR_DISCORD_USER_ID",
+      "api_key": "YOUR_API_KEY_FROM_PORTAL",
+      "status_report_interval_seconds": 30,
+      "auto_register": true,
+      
+      "__comment_certificates": "TLS certificates from Step CA - contact admin for certificates",
+      "ca_certificate_path": null,
+      "client_certificate_path": null,
+      "client_key_path": null
+    }
+  },
+  
+  "mqtt": {
+    "enabled": false,
+    "host": "localhost",
+    "port": 1883,
+    "client_id": "honfigurator-client",
+    "username": null,
+    "password": null,
+    "use_tls": false
+  },
+  
+  "notifications": {
+    "enabled": false,
+    "discord_webhook_url": null,
+    "notify_on_server_start": true,
+    "notify_on_server_stop": true,
+    "notify_on_match_start": true,
+    "notify_on_match_end": true,
+    "notify_on_error": true
+  }
+}

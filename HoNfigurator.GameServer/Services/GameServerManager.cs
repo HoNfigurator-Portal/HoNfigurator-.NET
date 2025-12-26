@@ -34,6 +34,16 @@ public interface IGameServerManager
     /// Set the listener reference for sending commands to game servers
     /// </summary>
     void SetListener(IGameServerListener listener);
+    
+    /// <summary>
+    /// Get all server instances (for management portal integration)
+    /// </summary>
+    IReadOnlyList<GameServerInstance> GetAllServers();
+    
+    /// <summary>
+    /// Get a server by its port number
+    /// </summary>
+    GameServerInstance? GetServerByPort(int port);
 }
 
 public class GameServerManager : IGameServerManager
@@ -727,5 +737,21 @@ public class GameServerManager : IGameServerManager
         _instances.Clear();
         _processes.Clear();
         _logger.LogInformation("Cleared all servers");
+    }
+
+    /// <summary>
+    /// Get all server instances (for management portal integration)
+    /// </summary>
+    public IReadOnlyList<GameServerInstance> GetAllServers()
+    {
+        return Instances;
+    }
+
+    /// <summary>
+    /// Get a server by its port number
+    /// </summary>
+    public GameServerInstance? GetServerByPort(int port)
+    {
+        return _instances.Values.FirstOrDefault(s => s.Port == port);
     }
 }

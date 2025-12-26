@@ -1,5 +1,6 @@
 using FluentAssertions;
 using HoNfigurator.Core.Events;
+using HoNfigurator.Core.Connectors;
 using Microsoft.Extensions.Logging;
 using Moq;
 
@@ -388,4 +389,454 @@ public class EventHandlersTests
         stats.Duration.Should().Be(TimeSpan.FromMinutes(30));
         stats.Winner.Should().Be("Legion");
     }
+
+    #region MqttEventHandler Tests
+
+    [Fact]
+    public void MqttEventHandler_CanHandle_WhenDisabled_ShouldReturnFalse()
+    {
+        var logger = Mock.Of<ILogger<MqttEventHandler>>();
+        var mockMqtt = new Mock<IMqttHandler>();
+        mockMqtt.Setup(m => m.IsEnabled).Returns(false);
+        mockMqtt.Setup(m => m.IsConnected).Returns(false);
+        
+        var handler = new MqttEventHandler(logger, mockMqtt.Object);
+
+        handler.CanHandle(GameEventType.MatchStarted).Should().BeFalse();
+    }
+
+    [Fact]
+    public void MqttEventHandler_CanHandle_WhenNotConnected_ShouldReturnFalse()
+    {
+        var logger = Mock.Of<ILogger<MqttEventHandler>>();
+        var mockMqtt = new Mock<IMqttHandler>();
+        mockMqtt.Setup(m => m.IsEnabled).Returns(true);
+        mockMqtt.Setup(m => m.IsConnected).Returns(false);
+        
+        var handler = new MqttEventHandler(logger, mockMqtt.Object);
+
+        handler.CanHandle(GameEventType.MatchStarted).Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(GameEventType.ServerStarted)]
+    [InlineData(GameEventType.ServerStopped)]
+    [InlineData(GameEventType.ServerCrashed)]
+    [InlineData(GameEventType.MatchStarted)]
+    [InlineData(GameEventType.MatchEnded)]
+    [InlineData(GameEventType.PlayerConnected)]
+    [InlineData(GameEventType.PlayerDisconnected)]
+    [InlineData(GameEventType.PlayerKicked)]
+    [InlineData(GameEventType.FirstBlood)]
+    public void MqttEventHandler_CanHandle_PublishableEvents_WhenConnected_ShouldReturnTrue(GameEventType eventType)
+    {
+        var logger = Mock.Of<ILogger<MqttEventHandler>>();
+        var mockMqtt = new Mock<IMqttHandler>();
+        mockMqtt.Setup(m => m.IsEnabled).Returns(true);
+        mockMqtt.Setup(m => m.IsConnected).Returns(true);
+        
+        var handler = new MqttEventHandler(logger, mockMqtt.Object);
+
+        handler.CanHandle(eventType).Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData(GameEventType.ChatMessage)]
+    [InlineData(GameEventType.AdminCommand)]
+    [InlineData(GameEventType.ConfigChanged)]
+    [InlineData(GameEventType.HeroSelected)]
+    [InlineData(GameEventType.TowerDestroyed)]
+    public void MqttEventHandler_CanHandle_NonPublishableEvents_WhenConnected_ShouldReturnFalse(GameEventType eventType)
+    {
+        var logger = Mock.Of<ILogger<MqttEventHandler>>();
+        var mockMqtt = new Mock<IMqttHandler>();
+        mockMqtt.Setup(m => m.IsEnabled).Returns(true);
+        mockMqtt.Setup(m => m.IsConnected).Returns(true);
+        
+        var handler = new MqttEventHandler(logger, mockMqtt.Object);
+
+        handler.CanHandle(eventType).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task MqttEventHandler_HandleAsync_ServerStarted_ShouldPublishServerStatus()
+    {
+        var logger = Mock.Of<ILogger<MqttEventHandler>>();
+        var mockMqtt = new Mock<IMqttHandler>();
+        mockMqtt.Setup(m => m.IsEnabled).Returns(true);
+        mockMqtt.Setup(m => m.IsConnected).Returns(true);
+        
+        var handler = new MqttEventHandler(logger, mockMqtt.Object);
+        var gameEvent = new GameEvent
+        {
+            EventType = GameEventType.ServerStarted,
+            ServerId = 1
+        };
+
+        await handler.HandleAsync(gameEvent);
+
+        mockMqtt.Verify(m => m.PublishServerStatusAsync(
+            1, 
+            MqttEventTypes.ServerReady, 
+            It.IsAny<object?>()), 
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task MqttEventHandler_HandleAsync_ServerCrashed_ShouldPublishServerOffline()
+    {
+        var logger = Mock.Of<ILogger<MqttEventHandler>>();
+        var mockMqtt = new Mock<IMqttHandler>();
+        mockMqtt.Setup(m => m.IsEnabled).Returns(true);
+        mockMqtt.Setup(m => m.IsConnected).Returns(true);
+        
+        var handler = new MqttEventHandler(logger, mockMqtt.Object);
+        var gameEvent = new GameEvent
+        {
+            EventType = GameEventType.ServerCrashed,
+            ServerId = 2
+        };
+
+        await handler.HandleAsync(gameEvent);
+
+        mockMqtt.Verify(m => m.PublishServerStatusAsync(
+            2, 
+            MqttEventTypes.ServerOffline, 
+            It.IsAny<object?>()), 
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task MqttEventHandler_HandleAsync_MatchStarted_ShouldPublishMatchEvent()
+    {
+        var logger = Mock.Of<ILogger<MqttEventHandler>>();
+        var mockMqtt = new Mock<IMqttHandler>();
+        mockMqtt.Setup(m => m.IsEnabled).Returns(true);
+        mockMqtt.Setup(m => m.IsConnected).Returns(true);
+        
+        var handler = new MqttEventHandler(logger, mockMqtt.Object);
+        var gameEvent = new GameEvent
+        {
+            EventType = GameEventType.MatchStarted,
+            ServerId = 1,
+            Data = new Dictionary<string, object>
+            {
+                ["matchId"] = 12345L,
+                ["gameMode"] = "Normal"
+            }
+        };
+
+        await handler.HandleAsync(gameEvent);
+
+        mockMqtt.Verify(m => m.PublishMatchEventAsync(
+            1, 
+            MqttEventTypes.MatchStarted, 
+            It.IsAny<object?>()), 
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task MqttEventHandler_HandleAsync_MatchEnded_ShouldPublishMatchEndEvent()
+    {
+        var logger = Mock.Of<ILogger<MqttEventHandler>>();
+        var mockMqtt = new Mock<IMqttHandler>();
+        mockMqtt.Setup(m => m.IsEnabled).Returns(true);
+        mockMqtt.Setup(m => m.IsConnected).Returns(true);
+        
+        var handler = new MqttEventHandler(logger, mockMqtt.Object);
+        var gameEvent = new GameEvent
+        {
+            EventType = GameEventType.MatchEnded,
+            ServerId = 1,
+            Data = new Dictionary<string, object>
+            {
+                ["matchId"] = 12345L,
+                ["winner"] = "Legion"
+            }
+        };
+
+        await handler.HandleAsync(gameEvent);
+
+        mockMqtt.Verify(m => m.PublishMatchEventAsync(
+            1, 
+            MqttEventTypes.MatchEnded, 
+            It.IsAny<object?>()), 
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task MqttEventHandler_HandleAsync_PlayerConnected_ShouldPublishPlayerEvent()
+    {
+        var logger = Mock.Of<ILogger<MqttEventHandler>>();
+        var mockMqtt = new Mock<IMqttHandler>();
+        mockMqtt.Setup(m => m.IsEnabled).Returns(true);
+        mockMqtt.Setup(m => m.IsConnected).Returns(true);
+        
+        var handler = new MqttEventHandler(logger, mockMqtt.Object);
+        var gameEvent = new GameEvent
+        {
+            EventType = GameEventType.PlayerConnected,
+            ServerId = 1,
+            Data = new Dictionary<string, object>
+            {
+                ["playerName"] = "TestPlayer",
+                ["accountId"] = 12345
+            }
+        };
+
+        await handler.HandleAsync(gameEvent);
+
+        mockMqtt.Verify(m => m.PublishPlayerEventAsync(
+            1, 
+            MqttEventTypes.PlayerJoined,
+            "TestPlayer",
+            It.IsAny<object?>()), 
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task MqttEventHandler_HandleAsync_PlayerKicked_ShouldPublishPlayerKickedEvent()
+    {
+        var logger = Mock.Of<ILogger<MqttEventHandler>>();
+        var mockMqtt = new Mock<IMqttHandler>();
+        mockMqtt.Setup(m => m.IsEnabled).Returns(true);
+        mockMqtt.Setup(m => m.IsConnected).Returns(true);
+        
+        var handler = new MqttEventHandler(logger, mockMqtt.Object);
+        var gameEvent = new GameEvent
+        {
+            EventType = GameEventType.PlayerKicked,
+            ServerId = 1,
+            Data = new Dictionary<string, object>
+            {
+                ["playerName"] = "BadPlayer",
+                ["reason"] = "AFK"
+            }
+        };
+
+        await handler.HandleAsync(gameEvent);
+
+        mockMqtt.Verify(m => m.PublishPlayerEventAsync(
+            1, 
+            MqttEventTypes.PlayerKicked,
+            "BadPlayer",
+            It.IsAny<object?>()), 
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task MqttEventHandler_HandleAsync_FirstBlood_ShouldPublishGamePlayEvent()
+    {
+        var logger = Mock.Of<ILogger<MqttEventHandler>>();
+        var mockMqtt = new Mock<IMqttHandler>();
+        mockMqtt.Setup(m => m.IsEnabled).Returns(true);
+        mockMqtt.Setup(m => m.IsConnected).Returns(true);
+        
+        var handler = new MqttEventHandler(logger, mockMqtt.Object);
+        var gameEvent = new GameEvent
+        {
+            EventType = GameEventType.FirstBlood,
+            ServerId = 1,
+            Data = new Dictionary<string, object>
+            {
+                ["matchId"] = 12345L
+            }
+        };
+
+        await handler.HandleAsync(gameEvent);
+
+        mockMqtt.Verify(m => m.PublishMatchEventAsync(
+            1, 
+            "first_blood", 
+            It.IsAny<object?>()), 
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task MqttEventHandler_HandleAsync_MissingPlayerName_ShouldUseUnknown()
+    {
+        var logger = Mock.Of<ILogger<MqttEventHandler>>();
+        var mockMqtt = new Mock<IMqttHandler>();
+        mockMqtt.Setup(m => m.IsEnabled).Returns(true);
+        mockMqtt.Setup(m => m.IsConnected).Returns(true);
+        
+        var handler = new MqttEventHandler(logger, mockMqtt.Object);
+        var gameEvent = new GameEvent
+        {
+            EventType = GameEventType.PlayerConnected,
+            ServerId = 1,
+            Data = new Dictionary<string, object>() // No playerName
+        };
+
+        await handler.HandleAsync(gameEvent);
+
+        mockMqtt.Verify(m => m.PublishPlayerEventAsync(
+            1, 
+            MqttEventTypes.PlayerJoined,
+            "Unknown",
+            It.IsAny<object?>()), 
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task MqttEventHandler_HandleAsync_WhenExceptionOccurs_ShouldNotThrow()
+    {
+        var logger = Mock.Of<ILogger<MqttEventHandler>>();
+        var mockMqtt = new Mock<IMqttHandler>();
+        mockMqtt.Setup(m => m.IsEnabled).Returns(true);
+        mockMqtt.Setup(m => m.IsConnected).Returns(true);
+        mockMqtt.Setup(m => m.PublishServerStatusAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<object?>()))
+            .ThrowsAsync(new Exception("MQTT publish failed"));
+        
+        var handler = new MqttEventHandler(logger, mockMqtt.Object);
+        var gameEvent = new GameEvent
+        {
+            EventType = GameEventType.ServerStarted,
+            ServerId = 1
+        };
+
+        // Should not throw
+        var act = async () => await handler.HandleAsync(gameEvent);
+        await act.Should().NotThrowAsync();
+    }
+
+    #endregion
+
+    #region NotificationEventHandler Tests
+
+    [Theory]
+    [InlineData(GameEventType.ServerCrashed)]
+    [InlineData(GameEventType.HealthCheckFailed)]
+    [InlineData(GameEventType.ResourceWarning)]
+    [InlineData(GameEventType.PlayerBanned)]
+    [InlineData(GameEventType.MatchAborted)]
+    public void NotificationEventHandler_CanHandle_NotifiableEvents_ShouldReturnTrue(GameEventType eventType)
+    {
+        var logger = Mock.Of<ILogger<NotificationEventHandler>>();
+        var handler = new NotificationEventHandler(logger);
+
+        handler.CanHandle(eventType).Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData(GameEventType.ServerStarted)]
+    [InlineData(GameEventType.MatchStarted)]
+    [InlineData(GameEventType.MatchEnded)]
+    [InlineData(GameEventType.PlayerConnected)]
+    [InlineData(GameEventType.ChatMessage)]
+    public void NotificationEventHandler_CanHandle_NonNotifiableEvents_ShouldReturnFalse(GameEventType eventType)
+    {
+        var logger = Mock.Of<ILogger<NotificationEventHandler>>();
+        var handler = new NotificationEventHandler(logger);
+
+        handler.CanHandle(eventType).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task NotificationEventHandler_HandleAsync_ServerCrashed_ShouldLogNotification()
+    {
+        var mockLogger = new Mock<ILogger<NotificationEventHandler>>();
+        var handler = new NotificationEventHandler(mockLogger.Object);
+        var gameEvent = new GameEvent
+        {
+            EventType = GameEventType.ServerCrashed,
+            ServerId = 1
+        };
+
+        await handler.HandleAsync(gameEvent);
+
+        mockLogger.Verify(
+            x => x.Log(
+                LogLevel.Information,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, t) => v.ToString()!.Contains("critical")),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task NotificationEventHandler_HandleAsync_HealthCheckFailed_ShouldLogWarningNotification()
+    {
+        var mockLogger = new Mock<ILogger<NotificationEventHandler>>();
+        var handler = new NotificationEventHandler(mockLogger.Object);
+        var gameEvent = new GameEvent
+        {
+            EventType = GameEventType.HealthCheckFailed,
+            ServerId = 1,
+            Data = new Dictionary<string, object>
+            {
+                ["reason"] = "Connection timeout"
+            }
+        };
+
+        await handler.HandleAsync(gameEvent);
+
+        mockLogger.Verify(
+            x => x.Log(
+                LogLevel.Information,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, t) => v.ToString()!.Contains("warning")),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task NotificationEventHandler_HandleAsync_ResourceWarning_ShouldIncludeResourceDetails()
+    {
+        var mockLogger = new Mock<ILogger<NotificationEventHandler>>();
+        var handler = new NotificationEventHandler(mockLogger.Object);
+        var gameEvent = new GameEvent
+        {
+            EventType = GameEventType.ResourceWarning,
+            ServerId = 1,
+            Data = new Dictionary<string, object>
+            {
+                ["resource"] = "CPU",
+                ["percentage"] = 95
+            }
+        };
+
+        await handler.HandleAsync(gameEvent);
+
+        mockLogger.Verify(
+            x => x.Log(
+                LogLevel.Information,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, t) => true),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task NotificationEventHandler_HandleAsync_PlayerBanned_ShouldIncludePlayerInfo()
+    {
+        var mockLogger = new Mock<ILogger<NotificationEventHandler>>();
+        var handler = new NotificationEventHandler(mockLogger.Object);
+        var gameEvent = new GameEvent
+        {
+            EventType = GameEventType.PlayerBanned,
+            ServerId = 1,
+            Data = new Dictionary<string, object>
+            {
+                ["playerName"] = "BadPlayer",
+                ["reason"] = "Cheating"
+            }
+        };
+
+        await handler.HandleAsync(gameEvent);
+
+        mockLogger.Verify(
+            x => x.Log(
+                LogLevel.Information,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, t) => v.ToString()!.Contains("info")),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+    }
+
+    #endregion
 }
