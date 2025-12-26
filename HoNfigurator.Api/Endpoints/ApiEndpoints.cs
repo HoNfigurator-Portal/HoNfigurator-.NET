@@ -1189,6 +1189,7 @@ public static class ApiEndpoints
         result["svr_location"] = new { value = config.HonData.Location, editable = true };
         result["svr_priority"] = new { value = config.HonData.Priority, editable = true };
         result["svr_total"] = new { value = config.HonData.TotalServers, editable = true };
+        result["svr_total_per_core"] = new { value = config.HonData.TotalPerCore, editable = true };
         result["svr_enableBotMatch"] = new { value = config.HonData.EnableBotMatch, editable = true };
         result["svr_start_on_launch"] = new { value = config.HonData.StartOnLaunch, editable = true };
         result["svr_noConsole"] = new { value = config.HonData.NoConsole, editable = true };
@@ -1253,6 +1254,10 @@ public static class ApiEndpoints
                         if (value.TryGetInt32(out var total))
                             config.HonData.TotalServers = total;
                         break;
+                    case "svr_total_per_core":
+                        if (value.TryGetDouble(out var perCore))
+                            config.HonData.TotalPerCore = perCore;
+                        break;
                     case "svr_enableBotMatch":
                         if (value.ValueKind == JsonValueKind.True || value.ValueKind == JsonValueKind.False)
                             config.HonData.EnableBotMatch = value.GetBoolean();
@@ -1312,6 +1317,9 @@ public static class ApiEndpoints
             }
             
             await configService.SaveConfigurationAsync(config);
+            
+            // Update GameServerManager's config reference so stats reflect new values
+            serverManager.Configuration = config;
             
             // Handle proxy toggle
             if (config.HonData.EnableProxy != previousProxyEnabled)

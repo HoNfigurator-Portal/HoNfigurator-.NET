@@ -216,6 +216,9 @@ public class SystemStats
     [JsonPropertyName("cpu_percent")]
     public double CpuUsagePercent { get; set; }
     
+    [JsonPropertyName("cpu_count")]
+    public int CpuCount { get; set; }
+    
     [JsonPropertyName("memory_percent")]
     public double MemoryUsagePercent { get; set; }
     
@@ -231,9 +234,21 @@ public class SystemStats
     [JsonPropertyName("uptime")]
     public string Uptime { get; set; } = string.Empty;
     
+    [JsonPropertyName("uptime_seconds")]
+    public long UptimeSeconds { get; set; }
+    
     [JsonPropertyName("hon_process_count")]
     public int HonProcessCount { get; set; }
     
     [JsonPropertyName("hon_total_memory_mb")]
     public long HonTotalMemoryMb { get; set; }
+    
+    [JsonPropertyName("svr_total_per_core")]
+    public double SvrTotalPerCore { get; set; } = 1.0;
+    
+    [JsonPropertyName("max_allowed_servers")]
+    public int MaxAllowedServers { get; set; }
+    
+    [JsonPropertyName("svr_total")]
+    public int SvrTotal { get; set; }
 }

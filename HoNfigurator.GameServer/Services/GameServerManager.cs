@@ -650,16 +650,45 @@ public class GameServerManager : IGameServerManager
             }
         }
 
+        // Calculate server capacity
+        var cpuCount = Environment.ProcessorCount;
+        var svrTotalPerCore = Configuration?.HonData?.TotalPerCore ?? 1.0;
+        var svrTotal = Configuration?.HonData?.TotalServers ?? 1;
+        var maxAllowedServers = GetTotalAllowedServers(cpuCount, svrTotalPerCore);
+
         return new SystemStats
         {
             CpuUsagePercent = 0, // Would need PerformanceCounter for accurate CPU
+            CpuCount = cpuCount,
             MemoryUsagePercent = 0,
             TotalMemoryMb = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / 1024 / 1024,
             UsedMemoryMb = process.WorkingSet64 / 1024 / 1024,
             HonProcessCount = honProcessCount,
             HonTotalMemoryMb = totalHonMemory / 1024 / 1024,
-            Uptime = $"{uptime.Days}d {uptime.Hours}h {uptime.Minutes}m"
+            Uptime = $"{uptime.Days}d {uptime.Hours}h {uptime.Minutes}m",
+            UptimeSeconds = (long)uptime.TotalSeconds,
+            SvrTotalPerCore = svrTotalPerCore,
+            MaxAllowedServers = maxAllowedServers,
+            SvrTotal = svrTotal
         };
+    }
+    
+    /// <summary>
+    /// Calculate maximum allowed servers based on CPU count and servers per core setting
+    /// Reserves some CPUs for OS/Manager: ≤4 cores: 1 reserved, 5-12: 2 reserved, >12: 4 reserved
+    /// </summary>
+    private static int GetTotalAllowedServers(int cpuCount, double svrTotalPerCore)
+    {
+        var total = svrTotalPerCore * cpuCount;
+        
+        if (cpuCount < 5)
+            total -= 1;
+        else if (cpuCount > 4 && cpuCount < 13)
+            total -= 2;
+        else if (cpuCount > 12)
+            total -= 4;
+        
+        return Math.Max(0, (int)total);
     }
 
     public void SetConnectionStatus(bool masterServer, bool chatServer)
