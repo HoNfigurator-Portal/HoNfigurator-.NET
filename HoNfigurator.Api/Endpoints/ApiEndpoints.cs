@@ -177,6 +177,10 @@ public static class ApiEndpoints
             .WithName("AddServers")
             .WithSummary("Add servers")
             .WithDescription("Adds new game server instances");
+        servers.MapPost("/add-all", AddAllServers)
+            .WithName("AddAllServers")
+            .WithSummary("Add all servers")
+            .WithDescription("Adds total number of possible servers based on CPU capacity");
         servers.MapDelete("/delete", DeleteServers)
             .WithName("DeleteServers")
             .WithSummary("Delete servers")
@@ -1037,6 +1041,70 @@ public static class ApiEndpoints
         }
         
         return Results.Ok(new { message = $"Added {count} server(s)", added, total = serverManager.Instances.Count });
+    }
+
+    private static IResult AddAllServers(IGameServerManager serverManager)
+    {
+        // Get max allowed servers based on CPU capacity (same logic as Python version)
+        var cpuCount = Environment.ProcessorCount;
+        var svrTotalPerCore = serverManager.Configuration?.HonData?.TotalPerCore ?? 1.0;
+        var maxAllowedServers = CalculateMaxAllowedServers(cpuCount, svrTotalPerCore);
+        
+        var currentCount = serverManager.Instances.Count;
+        var toAdd = maxAllowedServers - currentCount;
+        
+        if (toAdd <= 0)
+        {
+            return Results.Ok(new { 
+                message = $"Already at maximum capacity ({maxAllowedServers} servers)", 
+                currentCount,
+                maxAllowedServers,
+                added = 0
+            });
+        }
+        
+        var added = new List<object>();
+        var basePort = serverManager.Configuration?.HonData?.StartingGamePort ?? 10001;
+        var baseVoicePort = serverManager.Configuration?.HonData?.StartingVoicePort ?? 10061;
+        
+        for (int i = 0; i < toAdd; i++)
+        {
+            var newId = serverManager.AddNewServer();
+            if (newId > 0)
+            {
+                var server = serverManager.Instances.FirstOrDefault(s => s.Id == newId);
+                if (server != null)
+                {
+                    added.Add(new { id = newId, name = server.Name, port = server.Port });
+                }
+            }
+        }
+        
+        return Results.Ok(new { 
+            message = $"Added {added.Count} server(s) to reach maximum capacity", 
+            added,
+            previousCount = currentCount,
+            currentCount = serverManager.Instances.Count,
+            maxAllowedServers
+        });
+    }
+    
+    /// <summary>
+    /// Calculate maximum allowed servers based on CPU count and servers per core setting.
+    /// Reserves CPUs for OS/Manager: ≤4 cores: 1 reserved, 5-12: 2 reserved, >12: 4 reserved
+    /// </summary>
+    private static int CalculateMaxAllowedServers(int cpuCount, double svrTotalPerCore)
+    {
+        var total = svrTotalPerCore * cpuCount;
+        
+        if (cpuCount < 5)
+            total -= 1;
+        else if (cpuCount > 4 && cpuCount < 13)
+            total -= 2;
+        else if (cpuCount > 12)
+            total -= 4;
+        
+        return Math.Max(0, (int)total);
     }
 
     private static async Task<IResult> DeleteServers(HttpContext context, IGameServerManager serverManager)
