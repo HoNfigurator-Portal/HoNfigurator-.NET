@@ -169,7 +169,8 @@ public class GameServerListener : IGameServerListener
             var stream = client.GetStream();
             
             // Build message packet: prefix byte (0x24) + message + null terminator
-            var messageBytes = System.Text.Encoding.ASCII.GetBytes(message);
+            // Use UTF-8 encoding to support international characters (Thai, Chinese, etc.)
+            var messageBytes = System.Text.Encoding.UTF8.GetBytes(message);
             var packet = new byte[1 + messageBytes.Length + 1];
             packet[0] = GameServerCommands.MessagePrefixByte[0];
             Array.Copy(messageBytes, 0, packet, 1, messageBytes.Length);
@@ -207,7 +208,7 @@ public class GameServerListener : IGameServerListener
             var stream = client.GetStream();
             
             // Build command packet: prefix byte (0x25) + command + null terminator
-            var commandBytes = System.Text.Encoding.ASCII.GetBytes(command);
+            var commandBytes = System.Text.Encoding.UTF8.GetBytes(command);
             var packet = new byte[1 + commandBytes.Length + 1];
             packet[0] = GameServerCommands.CommandPrefixByte[0];
             Array.Copy(commandBytes, 0, packet, 1, commandBytes.Length);
