@@ -592,35 +592,33 @@ public class GameServerManager : IGameServerManager
 
     public async Task SendMessageToServerAsync(int id, string message)
     {
-        if (!_processes.TryGetValue(id, out var process) || process == null || process.HasExited)
+        // Use listener to send message via TCP connection
+        if (_listener != null)
         {
-            _logger.LogWarning("Cannot send message to server {Id} - process not found or has exited", id);
-            return;
+            var success = await _listener.SendMessageAsync(id, message);
+            if (success)
+            {
+                _logger.LogInformation("Message sent to server {Id} via listener: {Message}", id, message);
+                return;
+            }
+            _logger.LogWarning("Failed to send message to server {Id} via listener", id);
         }
-        
-        try
+        else
         {
-            // Format message as HoN console command
-            // sv_talk command sends a server message to all players
-            var command = $"sv_talk \"{message.Replace("\"", "\\\"")}\"";
-            
-            await process.StandardInput.WriteLineAsync(command);
-            await process.StandardInput.FlushAsync();
-            
-            _logger.LogInformation("Sent message to server {Id}: {Message}", id, message);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to send message to server {Id}", id);
+            _logger.LogWarning("Cannot send message to server {Id} - listener not available", id);
         }
     }
 
     public async Task SendMessageToAllServersAsync(string message)
     {
         _logger.LogInformation("Broadcasting message to all servers: {Message}", message);
-        foreach (var id in _instances.Keys)
+        var runningServers = _instances.Values
+            .Where(i => i.Status == ServerStatus.Ready || i.Status == ServerStatus.Occupied)
+            .ToList();
+            
+        foreach (var instance in runningServers)
         {
-            await SendMessageToServerAsync(id, message);
+            await SendMessageToServerAsync(instance.Id, message);
         }
     }
 
