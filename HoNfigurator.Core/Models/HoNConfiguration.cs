@@ -569,7 +569,7 @@ public class ManagementPortalSettings
     public string? ApiKey { get; set; }
 
     [JsonPropertyName("status_report_interval_seconds")]
-    public int StatusReportIntervalSeconds { get; set; } = 30;
+    public int StatusReportIntervalSeconds { get; set; } = 5;
 
     [JsonPropertyName("auto_register")]
     public bool AutoRegister { get; set; } = true;

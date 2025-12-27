@@ -1280,6 +1280,16 @@ public static class ApiEndpoints
         result["hon_home_directory"] = new { value = config.HonData.HonHomeDirectory, editable = true };
         result["svr_beta_mode"] = new { value = config.HonData.BetaMode, editable = false };
         
+        // Discord Bot Settings
+        var discord = config.ApplicationData?.Discord;
+        result["discord_bot_token"] = new { value = discord?.BotToken ?? "", editable = true };
+        result["discord_owner_id"] = new { value = discord?.OwnerId ?? "", editable = true };
+        result["discord_notification_channel_id"] = new { value = discord?.NotificationChannelId ?? "", editable = true };
+        result["discord_enable_notifications"] = new { value = discord?.EnableNotifications ?? true, editable = true };
+        result["discord_notify_match_start"] = new { value = discord?.NotifyMatchStart ?? true, editable = true };
+        result["discord_notify_match_end"] = new { value = discord?.NotifyMatchEnd ?? true, editable = true };
+        result["discord_notify_player_join_leave"] = new { value = discord?.NotifyPlayerJoinLeave ?? false, editable = true };
+        
         return Results.Ok(result);
     }
 
@@ -1380,6 +1390,46 @@ public static class ApiEndpoints
                         break;
                     case "hon_home_directory":
                         config.HonData.HonHomeDirectory = value.GetString() ?? config.HonData.HonHomeDirectory;
+                        break;
+                    // Discord Bot Settings
+                    case "discord_bot_token":
+                        config.ApplicationData ??= new ApplicationData();
+                        config.ApplicationData.Discord ??= new DiscordSettings();
+                        config.ApplicationData.Discord.BotToken = value.GetString() ?? config.ApplicationData.Discord.BotToken;
+                        break;
+                    case "discord_owner_id":
+                        config.ApplicationData ??= new ApplicationData();
+                        config.ApplicationData.Discord ??= new DiscordSettings();
+                        config.ApplicationData.Discord.OwnerId = value.GetString() ?? config.ApplicationData.Discord.OwnerId;
+                        break;
+                    case "discord_notification_channel_id":
+                        config.ApplicationData ??= new ApplicationData();
+                        config.ApplicationData.Discord ??= new DiscordSettings();
+                        config.ApplicationData.Discord.NotificationChannelId = value.GetString() ?? config.ApplicationData.Discord.NotificationChannelId;
+                        break;
+                    case "discord_enable_notifications":
+                        config.ApplicationData ??= new ApplicationData();
+                        config.ApplicationData.Discord ??= new DiscordSettings();
+                        if (value.ValueKind == JsonValueKind.True || value.ValueKind == JsonValueKind.False)
+                            config.ApplicationData.Discord.EnableNotifications = value.GetBoolean();
+                        break;
+                    case "discord_notify_match_start":
+                        config.ApplicationData ??= new ApplicationData();
+                        config.ApplicationData.Discord ??= new DiscordSettings();
+                        if (value.ValueKind == JsonValueKind.True || value.ValueKind == JsonValueKind.False)
+                            config.ApplicationData.Discord.NotifyMatchStart = value.GetBoolean();
+                        break;
+                    case "discord_notify_match_end":
+                        config.ApplicationData ??= new ApplicationData();
+                        config.ApplicationData.Discord ??= new DiscordSettings();
+                        if (value.ValueKind == JsonValueKind.True || value.ValueKind == JsonValueKind.False)
+                            config.ApplicationData.Discord.NotifyMatchEnd = value.GetBoolean();
+                        break;
+                    case "discord_notify_player_join_leave":
+                        config.ApplicationData ??= new ApplicationData();
+                        config.ApplicationData.Discord ??= new DiscordSettings();
+                        if (value.ValueKind == JsonValueKind.True || value.ValueKind == JsonValueKind.False)
+                            config.ApplicationData.Discord.NotifyPlayerJoinLeave = value.GetBoolean();
                         break;
                 }
             }
