@@ -592,9 +592,27 @@ public class GameServerManager : IGameServerManager
 
     public async Task SendMessageToServerAsync(int id, string message)
     {
-        // TODO: Implement actual TCP communication with game server
-        _logger.LogInformation("Sending message to server {Id}: {Message}", id, message);
-        await Task.CompletedTask;
+        if (!_processes.TryGetValue(id, out var process) || process == null || process.HasExited)
+        {
+            _logger.LogWarning("Cannot send message to server {Id} - process not found or has exited", id);
+            return;
+        }
+        
+        try
+        {
+            // Format message as HoN console command
+            // sv_talk command sends a server message to all players
+            var command = $"sv_talk \"{message.Replace("\"", "\\\"")}\"";
+            
+            await process.StandardInput.WriteLineAsync(command);
+            await process.StandardInput.FlushAsync();
+            
+            _logger.LogInformation("Sent message to server {Id}: {Message}", id, message);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send message to server {Id}", id);
+        }
     }
 
     public async Task SendMessageToAllServersAsync(string message)

@@ -1186,10 +1186,30 @@ public static class ApiEndpoints
                 type = typeElement.GetString() ?? "info";
         }
         
-        // In a real implementation, this would send the message to all running servers
-        var runningCount = serverManager.Instances.Count(s => s.Status == ServerStatus.Ready || s.Status == ServerStatus.Occupied);
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return Results.BadRequest(new { error = "Message is required" });
+        }
         
-        return Results.Ok(new { message = $"Message sent to {runningCount} server(s)", content = message, type });
+        // Send message to all running servers
+        var runningServers = serverManager.Instances
+            .Where(s => s.Status == ServerStatus.Ready || s.Status == ServerStatus.Occupied)
+            .ToList();
+        
+        if (runningServers.Count == 0)
+        {
+            return Results.Ok(new { message = "No running servers to broadcast to", sentCount = 0 });
+        }
+        
+        // Send message using sv_talk console command (HoN server console command for chat)
+        await serverManager.SendMessageToAllServersAsync(message);
+        
+        return Results.Ok(new { 
+            message = $"Message sent to {runningServers.Count} server(s)", 
+            content = message, 
+            type,
+            sentCount = runningServers.Count
+        });
     }
 
     private static async Task<IResult> KickPlayerFromServer(int id, [FromBody] KickPlayerRequest request, IGameServerManager serverManager, BanManager banManager)
