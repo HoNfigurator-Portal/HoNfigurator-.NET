@@ -133,7 +133,15 @@ builder.Services.AddSingleton<ReplayManager>(sp =>
 {
     var logger = sp.GetRequiredService<ILogger<ReplayManager>>();
     var config = sp.GetRequiredService<HoNConfiguration>();
-    var replaysPath = Path.Combine(AppContext.BaseDirectory, "replays");
+    
+    // Replays are stored in HoN install directory/game/replays
+    // Fall back to local replays folder if HoN path not configured
+    var replaysPath = !string.IsNullOrEmpty(config.HonData?.HonInstallDirectory)
+        ? Path.Combine(config.HonData.HonInstallDirectory, "game", "replays")
+        : Path.Combine(AppContext.BaseDirectory, "replays");
+    
+    logger.LogInformation("ReplayManager using path: {Path}", replaysPath);
+    
     var manager = new ReplayManager(logger, replaysPath);
     // Configure for master server uploads if available
     if (!string.IsNullOrEmpty(config.HonData?.MasterServer))
