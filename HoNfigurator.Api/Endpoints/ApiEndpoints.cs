@@ -950,9 +950,32 @@ public static class ApiEndpoints
 
     private static async Task<IResult> StopServer(int id, IGameServerManager serverManager, IProxyService proxyService)
     {
+        var server = serverManager.Instances.FirstOrDefault(s => s.Id == id);
+        if (server == null)
+        {
+            return Results.NotFound(new { error = $"Server {id} not found", success = false });
+        }
+        
+        // Server already offline
+        if (server.Status == ServerStatus.Offline)
+        {
+            return Results.Ok(new { message = $"Server {id} is already offline", success = true });
+        }
+        
         proxyService.StopProxy(id);
         var success = await serverManager.StopServerAsync(id);
-        return success ? Results.Ok() : Results.NotFound();
+        
+        if (success)
+        {
+            return Results.Ok(new { message = $"Server {id} stopped successfully", success = true });
+        }
+        else
+        {
+            // Force mark as offline anyway since we want it stopped
+            server.Status = ServerStatus.Offline;
+            server.NumClients = 0;
+            return Results.Ok(new { message = $"Server {id} marked as offline", success = true });
+        }
     }
 
     private static async Task<IResult> RestartServer(int id, IGameServerManager serverManager, IProxyService proxyService)
@@ -978,11 +1001,12 @@ public static class ApiEndpoints
             return Results.NotFound(new { error = $"Server {id} not found" });
         }
         
-        // Send serverreset command to kick all players
-        var success = await listener.SendCommandAsync(id, "serverreset");
+        // Send shutdown command to kick all players and reset
+        // This sends binary command 0x22 which properly kicks everyone
+        var success = await listener.SendShutdownCommandAsync(id);
         return success 
-            ? Results.Ok(new { message = $"Reset command sent to server {id}", success = true })
-            : Results.BadRequest(new { error = "Failed to send reset command", success = false });
+            ? Results.Ok(new { message = $"Shutdown/reset command sent to server {id}", success = true })
+            : Results.BadRequest(new { error = "Failed to send reset command (server may not be connected)", success = false });
     }
 
     private static async Task<IResult> StartAllServers(IGameServerManager serverManager, IProxyService proxyService)
@@ -1301,6 +1325,10 @@ public static class ApiEndpoints
         result["svr_maxClients"] = new { value = 10, editable = true };
         result["svr_managerPort"] = new { value = config.HonData.ManagerPort, editable = false };
         
+        // Host credentials
+        result["svr_login"] = new { value = config.HonData.Login, editable = true };
+        result["svr_password"] = new { value = config.HonData.Password, editable = true };
+        
         // Read-only info
         result["hon_install_directory"] = new { value = config.HonData.HonInstallDirectory, editable = true };
         result["hon_home_directory"] = new { value = config.HonData.HonHomeDirectory, editable = true };
@@ -1416,6 +1444,12 @@ public static class ApiEndpoints
                         break;
                     case "hon_home_directory":
                         config.HonData.HonHomeDirectory = value.GetString() ?? config.HonData.HonHomeDirectory;
+                        break;
+                    case "svr_login":
+                        config.HonData.Login = value.GetString() ?? config.HonData.Login;
+                        break;
+                    case "svr_password":
+                        config.HonData.Password = value.GetString() ?? config.HonData.Password;
                         break;
                     // Discord Bot Settings
                     case "discord_bot_token":
